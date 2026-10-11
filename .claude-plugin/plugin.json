@@ -1,0 +1,7 @@
+{
+  "name": "session-board",
+  "version": "0.1.0",
+  "author": { "name": "Lars Nyström" },
+  "license": "MIT",
+  "description": "Writes a live status file for every Claude Code session to ~/.claude/board/ and serves a dashboard over them."
+}

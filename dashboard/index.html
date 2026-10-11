@@ -1,0 +1,659 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Session Board</title>
+<link rel="icon" id="favicon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='7'%20fill='%2314151b'/%3E%3Crect%20x='5'%20y='5'%20width='10'%20height='10'%20rx='2.5'%20fill='%238be9fd'/%3E%3Crect%20x='17'%20y='5'%20width='10'%20height='10'%20rx='2.5'%20fill='%23bd93f9'/%3E%3Crect%20x='5'%20y='17'%20width='10'%20height='10'%20rx='2.5'%20fill='%2350fa7b'/%3E%3Crect%20x='17'%20y='17'%20width='10'%20height='10'%20rx='2.5'%20fill='%23868ba0'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #14151b;
+    --panel: #1a1c24;
+    --card: #20222c;
+    --card-hover: #252835;
+    --line: #2b2e3b;
+    --text: #e4e5ea;
+    --muted: #868ba0;
+    --faint: #5b6075;
+    --run: #8be9fd;
+    --ok: #50fa7b;
+    --warn: #ffb86c;
+    --you: #ff79c6;
+    --bg-agent: #bd93f9;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  button { font: inherit; color: inherit; }
+
+  header {
+    display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
+    padding: 28px 32px 6px;
+  }
+  h1 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
+  .summary { display: flex; gap: 14px; flex-wrap: wrap; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .summary b { font-weight: 600; }
+  .summary .you b { color: var(--you); }
+  .summary .run b { color: var(--run); }
+  .summary .bg b { color: var(--bg-agent); }
+  .summary .zero { color: var(--faint); }
+  .summary .zero b { color: inherit; }
+  .sort { margin-left: auto; display: flex; align-items: baseline; gap: 2px; font-family: var(--mono); font-size: 12px; color: var(--faint); }
+  .sort span { margin-right: 6px; }
+  .sort button { background: none; border: 1px solid transparent; border-radius: 6px; padding: 1px 7px; cursor: pointer; color: var(--muted); }
+  .sort button:hover { color: var(--text); }
+  .sort button[aria-pressed="true"] { color: var(--text); border-color: var(--line); background: var(--card); }
+  .sort button:focus-visible { outline: 2px solid var(--run); outline-offset: 1px; }
+  .status { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .status .dot {
+    display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--ok); margin-right: 6px; vertical-align: 1px;
+  }
+  .status.error { color: var(--you); }
+  .status.error .dot { background: var(--you); }
+
+  main { padding: 18px 32px 40px; }
+  .grid {
+    display: grid; gap: 14px; align-items: start;
+    grid-template-columns: repeat(auto-fill, minmax(min(330px, 100%), 1fr));
+  }
+  .empty-all { color: var(--faint); padding: 40px 0; text-align: center; }
+  .empty-all code { font-family: var(--mono); color: var(--muted); }
+
+  /* Tiles */
+  .tile {
+    position: relative; overflow: hidden; display: block; width: 100%; text-align: left;
+    cursor: pointer; background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 14px 14px 12px; animation: enter .35s ease both;
+    transition: background .15s, border-color .3s, box-shadow .3s, opacity .3s;
+  }
+  .tile:hover { background: var(--card-hover); }
+  .tile:focus-visible { outline: 2px solid var(--run); outline-offset: 2px; }
+  .tile::before {
+    content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px; opacity: 0;
+    background: linear-gradient(90deg, transparent, var(--accent, var(--run)), transparent);
+    background-size: 50% 100%; background-repeat: no-repeat;
+  }
+  .tile.s-running { border-color: color-mix(in srgb, var(--run) 30%, var(--line)); }
+  .tile.s-running::before { opacity: 1; animation: sweep 1.8s linear infinite; }
+  .tile.s-background { --accent: var(--bg-agent); border-color: color-mix(in srgb, var(--bg-agent) 25%, var(--line)); }
+  .tile.s-background::before { opacity: .8; animation: sweep 3.6s linear infinite; }
+  .tile.s-waiting {
+    border-color: var(--you);
+    animation: enter .35s ease both, glow 2.2s ease-in-out infinite;
+  }
+  .tile.s-idle { opacity: .9; }
+  .tile.stale { opacity: .5; filter: saturate(.3); }
+  .tile.blip { animation: enter .35s ease both, blip .7s ease-out; }
+  .tile.s-waiting.blip { animation: enter .35s ease both, glow 2.2s ease-in-out infinite; }
+
+  .t-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .state-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--faint); }
+  .s-running .state-dot { background: var(--run); animation: pulse 1.4s ease-in-out infinite; }
+  .s-background .state-dot { background: var(--bg-agent); animation: pulse 2.4s ease-in-out infinite; }
+  .s-waiting .state-dot { background: var(--you); animation: pulse .9s ease-in-out infinite; }
+  .s-idle .state-dot { background: var(--ok); }
+  .project { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .branch { font-family: var(--mono); font-size: 11px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .since { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
+  .s-waiting .since { color: var(--you); }
+
+  /* Every tile has the same fixed slots, so tiles are all one height and content
+     changes between polls never reflow the grid. */
+  .title { margin: 8px 0 2px; height: 22px; font-size: 15px; line-height: 22px; font-weight: 600; display: flex; gap: 8px; align-items: center; min-width: 0; }
+  .title .tt { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .title .wi { font-family: var(--mono); color: var(--run); }
+  .title .skill { font-family: var(--mono); font-size: 12px; font-weight: 500; color: var(--muted); }
+  .title .wi + .skill { margin-left: 8px; }
+  .prompt { color: var(--muted); font-size: 12.5px; line-height: 1.5; height: 3em; margin: 2px 0 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .slot { margin-top: 10px; height: 78px; overflow: hidden; }
+
+  .phase {
+    display: inline-flex; align-items: center; gap: 6px; flex: none; margin-left: auto;
+    font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase;
+    color: var(--run); background: color-mix(in srgb, var(--run) 12%, transparent);
+    padding: 0 8px; line-height: 20px; border-radius: 999px;
+  }
+  .s-background .phase { color: var(--bg-agent); background: color-mix(in srgb, var(--bg-agent) 14%, transparent); }
+
+  .ask {
+    padding: 8px 10px; border-radius: 8px; font-size: 12.5px;
+    color: var(--you); background: color-mix(in srgb, var(--you) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--you) 35%, transparent);
+  }
+  .ask b { font-weight: 600; }
+  .ask .d { font-family: var(--mono); font-size: 11.5px; color: var(--text); overflow-wrap: anywhere; }
+  .slot .ask { height: 100%; }
+  .slot .ask .d { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+  .activity { display: grid; gap: 3px; }
+  .d-body .activity { margin-top: 10px; }
+  .act { display: flex; gap: 8px; align-items: baseline; font-family: var(--mono); font-size: 11.5px; min-width: 0; }
+  .act .who { color: var(--bg-agent); flex: none; }
+  .act .what { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .act .t { margin-left: auto; color: var(--faint); flex: none; }
+  .act.last .what { color: var(--muted); }
+
+  .agents { margin-top: 10px; height: 22px; display: flex; gap: 5px; overflow: hidden; }
+  .agent {
+    display: inline-flex; align-items: center; gap: 5px; flex: none; font-family: var(--mono); font-size: 10.5px;
+    padding: 2px 7px; border-radius: 5px; border: 1px solid var(--line); color: var(--muted);
+  }
+  .agent.running { color: var(--text); border-color: color-mix(in srgb, var(--bg-agent) 45%, var(--line)); }
+  .agent.done { color: var(--ok); background: color-mix(in srgb, var(--ok) 8%, transparent); border-color: transparent; }
+  .agent.failed { color: var(--you); border-color: color-mix(in srgb, var(--you) 40%, transparent); }
+  .agent .spin {
+    width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--bg-agent);
+    border-right-color: transparent; animation: spin .8s linear infinite;
+  }
+
+  .t-foot { margin-top: 12px; display: flex; align-items: center; gap: 12px; font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
+  .meter { flex: 1; max-width: 120px; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+  .meter i { display: block; height: 100%; background: var(--muted); border-radius: 2px; transition: width .6s ease; }
+  .meter.hot i { background: var(--warn); }
+
+  /* Ended & stale */
+  details.past { margin-top: 32px; }
+  details.past summary { cursor: pointer; color: var(--muted); font-size: 13px; list-style: none; }
+  details.past summary::before { content: "▸ "; color: var(--faint); }
+  details.past[open] summary::before { content: "▾ "; }
+  .rows { margin-top: 10px; display: grid; gap: 4px; }
+  .row {
+    display: grid; grid-template-columns: 160px 1fr auto; gap: 14px; align-items: baseline; width: 100%;
+    text-align: left; background: none; border: 0; border-radius: 6px; padding: 6px 8px; cursor: pointer;
+    font-size: 12.5px; color: var(--muted);
+  }
+  .row:hover { background: var(--card); color: var(--text); }
+  .row .p { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+  .row .x { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .w { font-family: var(--mono); font-size: 11px; color: var(--faint); white-space: nowrap; }
+
+  /* Drawer */
+  .scrim { position: fixed; inset: 0; background: rgba(5, 6, 10, .55); opacity: 0; pointer-events: none; transition: opacity .2s; }
+  .drawer {
+    position: fixed; top: 0; right: 0; bottom: 0; width: min(720px, 100vw); overflow-y: auto;
+    background: var(--panel); border-left: 1px solid var(--line);
+    transform: translateX(100%); transition: transform .25s ease;
+  }
+  .open .scrim { opacity: 1; pointer-events: auto; }
+  .open .drawer { transform: none; }
+  .d-head { position: sticky; top: 0; z-index: 1; background: var(--panel); padding: 20px 24px 14px; border-bottom: 1px solid var(--line); }
+  .d-head h3 { margin: 2px 40px 4px 0; font-size: 16px; font-weight: 600; line-height: 1.35; }
+  .close {
+    position: absolute; top: 16px; right: 16px; width: 32px; height: 32px; border-radius: 8px;
+    border: 1px solid var(--line); background: none; cursor: pointer; color: var(--muted); font-size: 18px; line-height: 1;
+  }
+  .close:hover { color: var(--text); border-color: var(--muted); }
+  .d-body { padding: 18px 24px 60px; }
+  .d-body h4 { margin: 22px 0 8px; font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
+  .d-body h4:first-child { margin-top: 0; }
+  .kv { display: grid; grid-template-columns: 110px 1fr; gap: 4px 12px; font-size: 12.5px; }
+  .kv dt { color: var(--faint); }
+  .kv dd { margin: 0; font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+  .quote { white-space: pre-wrap; font-size: 13px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+  .copy {
+    margin-top: 8px; font-family: var(--mono); font-size: 11.5px; background: var(--card); border: 1px solid var(--line);
+    border-radius: 6px; padding: 4px 10px; cursor: pointer; color: var(--muted);
+  }
+  .copy:hover { color: var(--text); border-color: var(--muted); }
+  table.ag { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table.ag td { border-top: 1px solid var(--line); padding: 6px 8px 6px 0; vertical-align: top; }
+  table.ag .ty { font-family: var(--mono); white-space: nowrap; }
+  table.ag .st { font-family: var(--mono); font-size: 11px; white-space: nowrap; }
+  table.ag .lt { font-family: var(--mono); font-size: 11px; color: var(--faint); overflow-wrap: anywhere; }
+  .timeline { display: grid; gap: 2px; }
+  .ev { display: grid; grid-template-columns: 62px 70px 1fr; gap: 10px; font-size: 12px; align-items: baseline; }
+  .ev .tm { font-family: var(--mono); font-size: 11px; color: var(--faint); }
+  .ev .k { font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  .ev .tx { overflow-wrap: anywhere; }
+  .ev .tx .ag { color: var(--bg-agent); font-family: var(--mono); font-size: 11px; margin-right: 6px; }
+  .ev.prompt .k { color: var(--run); } .ev.prompt .tx { color: var(--text); font-weight: 500; }
+  .ev.waiting .k, .ev.error .k { color: var(--you); }
+  .ev.agent .k { color: var(--bg-agent); }
+  .ev.skill .k { color: var(--warn); }
+  .ev.tool .tx { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+
+  @keyframes sweep { from { background-position: -50% 0; } to { background-position: 150% 0; } }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes enter { from { opacity: 0; transform: translateY(6px) scale(.985); } }
+  @keyframes glow {
+    0%, 100% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--you) 30%, transparent), 0 6px 22px -12px color-mix(in srgb, var(--you) 50%, transparent); }
+    50% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--you) 70%, transparent), 0 10px 34px -10px color-mix(in srgb, var(--you) 80%, transparent); }
+  }
+  @keyframes blip { 0% { background: color-mix(in srgb, var(--run) 10%, var(--card)); } 100% { background: var(--card); } }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before { animation: none !important; transition: none !important; }
+  }
+
+  @media (max-width: 640px) {
+    header { padding: 20px 16px 4px; }
+    .sort { margin-left: 0; }
+    .status { margin-left: auto; }
+    main { padding: 14px 16px 32px; }
+    .grid { grid-template-columns: minmax(0, 1fr); }
+    .row { grid-template-columns: 1fr auto; }
+    .row .x { display: none; }
+    .d-head { padding: 16px; }
+    .d-body { padding: 16px 16px 48px; }
+    .kv { grid-template-columns: 90px 1fr; }
+    .ev { grid-template-columns: 52px 1fr; }
+    .ev .k { display: none; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Sessions</h1>
+  <div class="summary" id="summary"></div>
+  <div class="sort" role="group" aria-label="Sort sessions">
+    <span>sort</span>
+    <button data-sort="started" aria-pressed="true">started</button>
+    <button data-sort="project" aria-pressed="false">project</button>
+    <button data-sort="waiting" aria-pressed="false">needs you first</button>
+  </div>
+  <div class="status" id="status">connecting…</div>
+</header>
+<main>
+  <div class="grid" id="grid"></div>
+  <div id="empty"></div>
+  <details class="past" id="past" hidden>
+    <summary id="past-summary"></summary>
+    <div class="rows" id="rows"></div>
+  </details>
+</main>
+
+<div id="overlay">
+  <div class="scrim" data-close></div>
+  <aside class="drawer" role="dialog" aria-modal="true" aria-labelledby="d-title">
+    <div class="d-head">
+      <div class="branch" id="d-sub"></div>
+      <h3 id="d-title"></h3>
+      <button class="close" data-close aria-label="Close">×</button>
+    </div>
+    <div class="d-body" id="d-body"></div>
+  </aside>
+</div>
+
+<script>
+const POLL_MS = 2000
+const STALE_MS = 20_000          // no heartbeat for this long: the session is gone
+const HIDE_AFTER_MS = 24 * 3600_000
+
+// Phases by subagent type, newest running agent first, then by running skill.
+// Your own rules go in phases.json next to this page and are tried first:
+// [{ "agent": "^my-agent$", "phase": "Implementing" }, { "skill": "deploy", "phase": "Deploying" }]
+const DEFAULT_PHASES = [
+  { agent: /review/i, phase: 'Reviewing' },
+  { agent: /^(Explore|Plan)$/, phase: 'Exploring' },
+  { agent: /^general-purpose$/, phase: 'Working' },
+  { skill: /review/i, phase: 'Reviewing' },
+]
+let phases = DEFAULT_PHASES
+const STATE_WORD = { waiting: 'needs you', running: 'running', background: 'agents running', idle: 'idle', ended: 'ended' }
+
+const $ = (id) => document.getElementById(id)
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
+
+let sessions = []
+const endedCache = new Map()   // file -> board of an ended session (never changes again)
+const tiles = new Map()        // sessionId -> { el, html, lastEvent }
+let sortBy = 'started'
+try { sortBy = localStorage.getItem('sessionBoard.sort') || sortBy } catch {}
+let openId = null
+let openHtml = ''
+
+async function fetchText(url) {
+  const res = await fetch(url, { cache: 'no-store' })
+  if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`)
+  return res.text()
+}
+
+// python -m http.server serves an HTML index for directories; read its links.
+async function loadSessions() {
+  let listing
+  try {
+    listing = await fetchText('sessions/')
+  } catch (err) {
+    if (/HTTP 404/.test(err.message)) return []
+    throw err
+  }
+  const doc = new DOMParser().parseFromString(listing, 'text/html')
+  const files = [...doc.querySelectorAll('a')]
+    .map((a) => decodeURIComponent(a.getAttribute('href')))
+    .filter((h) => h.endsWith('.json'))
+  const boards = await Promise.all(files.map(async (f) => {
+    if (endedCache.has(f)) return endedCache.get(f)
+    try {
+      const board = JSON.parse(await fetchText('sessions/' + encodeURIComponent(f)))
+      if (board.state === 'ended') endedCache.set(f, board)
+      return board
+    } catch {
+      return null  // mid-write or malformed: next poll
+    }
+  }))
+  return boards.filter(Boolean)
+}
+
+// ---- Formatting -----------------------------------------------------------
+
+function dur(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000))
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}m ${String(s % 60).padStart(2, '0')}s`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h}h ${String(m % 60).padStart(2, '0')}m`
+  return `${Math.floor(h / 24)}d ${h % 24}h`
+}
+const live = (since, prefix = '') => `<span data-since="${since}" data-prefix="${esc(prefix)}">${esc(prefix)}${dur(Date.now() - since)}</span>`
+const clock = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+
+const isStale = (s) => s.state !== 'ended' && Date.now() - s.updatedAt > STALE_MS
+const projectOf = (s) => s.repo?.name || s.project || s.cwd
+const shortModel = (m) => (m || '').replace(/^claude-/, '').replace(/\[.*\]$/, '')
+
+function phaseOf(s) {
+  const running = s.agents.filter((a) => a.status === 'running').sort((a, b) => b.since - a.since)
+  for (const a of running) for (const p of phases) if (p.agent?.test(a.type)) return p.phase
+  if (s.state === 'running' && s.activeSkill) for (const p of phases) if (p.skill?.test(s.activeSkill)) return p.phase
+  return running[0]?.type ?? null
+}
+
+// phases.json is optional; a missing or broken file leaves the defaults.
+async function loadPhases() {
+  let rules
+  try {
+    rules = JSON.parse(await fetchText('phases.json'))
+  } catch {
+    return
+  }
+  if (!Array.isArray(rules)) return
+  const own = []
+  for (const r of rules) {
+    try {
+      if (typeof r?.phase !== 'string' || (!r.agent && !r.skill)) continue
+      own.push({
+        phase: r.phase,
+        agent: r.agent ? new RegExp(r.agent, 'i') : null,
+        skill: r.skill ? new RegExp(r.skill, 'i') : null,
+      })
+    } catch {}  // a bad regex skips that rule only
+  }
+  phases = [...own, ...DEFAULT_PHASES]
+}
+
+const firstSentence = (p) => p.split(/(?<=[.?!])\s|\n/)[0].slice(0, 90)
+
+function titleOf(s) {
+  if (s.workItem) {
+    return `<span class="wi">#${esc(s.workItem)}</span>${s.skill ? `<span class="skill">${esc(s.skill.name)}</span>` : ''}`
+  }
+  if (s.skill) return `<span class="skill" style="font-size:14px;color:var(--text)">/${esc(s.skill.name)}</span>`
+  if (s.prompt) return esc(firstSentence(s.prompt))
+  return '<span style="color:var(--faint)">No prompt yet</span>'
+}
+
+// ---- Tiles ----------------------------------------------------------------
+
+function tileHtml(s) {
+  const stale = isStale(s)
+  const phase = phaseOf(s)
+  const parts = []
+  parts.push(`
+    <div class="t-top">
+      <span class="state-dot"></span>
+      <span class="project">${esc(projectOf(s))}</span>
+      ${s.branch ? `<span class="branch">${esc(s.branch)}</span>` : ''}
+      <span class="since">${stale ? `no heartbeat ${live(s.updatedAt)}` : live(s.stateSince, STATE_WORD[s.state] + ' ')}</span>
+    </div>
+    <div class="title"><span class="tt">${titleOf(s)}</span>${phase ? `<span class="phase">${esc(phase)}</span>` : ''}</div>`)
+  // The title already shows the prompt's first sentence when there's no work item or skill.
+  const promptText = s.workItem || s.skill ? s.prompt : s.prompt?.slice(firstSentence(s.prompt).length).trim()
+  parts.push(`<p class="prompt">${esc(promptText)}</p>`)
+
+  // One fixed slot: the question when the session needs you, otherwise what it's doing.
+  let slot = ''
+  if (s.waiting) {
+    const word = { permission: 'Needs permission', question: 'Has a question', plan: 'Plan to approve', notification: 'Needs your attention' }[s.waiting.kind]
+    slot = `<div class="ask"><b>${word}</b> · ${live(s.waiting.since)}<div class="d">${esc(s.waiting.detail)}</div></div>`
+  } else {
+    const nameOf = (id) => s.agents.find((a) => a.agentId === id)?.type
+    const acts = [...s.tools].sort((a, b) => (a.agentId ? 1 : 0) - (b.agentId ? 1 : 0) || a.since - b.since).slice(0, 4)
+    if (acts.length) {
+      slot = `<div class="activity">${acts.map((t) => `
+        <div class="act">${t.agentId ? `<span class="who">${esc(nameOf(t.agentId) || 'agent')}</span>` : ''}
+          <span class="what">${esc(t.tool)}${t.summary ? ` · ${esc(t.summary)}` : ''}</span>
+          <span class="t">${live(t.since)}</span></div>`).join('')}</div>`
+    } else {
+      const last = [...s.events].reverse().find((e) => e.kind !== 'session')
+      if (last) slot = `<div class="activity"><div class="act last"><span class="what">${esc(last.text)}</span><span class="t">${live(last.t)} ago</span></div></div>`
+    }
+  }
+  parts.push(`<div class="slot">${slot}</div>`)
+
+  // One line of agents, running first so they're never the ones clipped.
+  const running = s.agents.filter((a) => a.status === 'running' || a.status === 'idle')
+  const recent = s.agents.filter((a) => a.status === 'done' || a.status === 'failed').slice(-Math.max(0, 6 - running.length)).reverse()
+  parts.push(`<div class="agents">${[...running, ...recent].map((a) => `
+    <span class="agent ${a.status}" title="${esc(a.description)}${a.lastTool ? '\n' + esc(a.lastTool) : ''}">
+      ${a.status === 'running' ? '<span class="spin"></span>' : a.status === 'done' ? '✓' : a.status === 'failed' ? '✕' : '…'}
+      ${esc(a.type)}</span>`).join('')}</div>`)
+
+  const pct = s.context?.percent
+  parts.push(`
+    <div class="t-foot">
+      ${pct != null ? `<span class="meter ${pct > 75 ? 'hot' : ''}" title="context ${Math.round(pct)}%"><i style="width:${Math.min(100, pct)}%"></i></span><span>${Math.round(pct)}%</span>` : ''}
+      ${s.costUsd != null ? `<span>$${s.costUsd.toFixed(2)}</span>` : ''}
+      <span>${s.turns} turn${s.turns === 1 ? '' : 's'}</span>
+      ${s.model ? `<span>${esc(shortModel(s.model))}</span>` : ''}
+    </div>`)
+  return parts.join('')
+}
+
+function render() {
+  const now = Date.now()
+  const active = sessions.filter((s) => s.state !== 'ended' && !isStale(s))
+  const past = sessions.filter((s) => (s.state === 'ended' || isStale(s)) && now - s.updatedAt < HIDE_AFTER_MS)
+  // Never sort on heartbeats or busy/idle: they change every few seconds and
+  // reshuffled the grid on every poll. Every order ends on start time, oldest
+  // first, so new sessions append and a tile otherwise keeps its place.
+  const byStart = (a, b) => a.startedAt - b.startedAt || (a.sessionId < b.sessionId ? -1 : 1)
+  const sorts = {
+    started: byStart,
+    project: (a, b) => projectOf(a).localeCompare(projectOf(b), undefined, { sensitivity: 'base' }) || byStart(a, b),
+    // Moves a tile only when a session starts or stops needing you.
+    waiting: (a, b) => (b.state === 'waiting') - (a.state === 'waiting') || byStart(a, b),
+  }
+  active.sort(sorts[sortBy] || byStart)
+
+  // Summary: always all four counts, so the header doesn't shift either.
+  const count = (st) => active.filter((s) => s.state === st).length
+  const bits = [
+    ['you', count('waiting'), 'need you'],
+    ['run', count('running'), 'running'],
+    ['bg', count('background'), 'background'],
+    ['', count('idle'), 'idle'],
+  ]
+  $('summary').innerHTML = bits.map(([c, n, w]) => `<span class="${c}${n ? '' : ' zero'}"><b>${n}</b> ${w}</span>`).join('')
+  document.title = count('waiting') ? `(${count('waiting')}) Session Board` : 'Session Board'
+  setFavicon(count('waiting') ? 'waiting' : 'ok')
+
+  // Tiles, keyed so animations survive polls
+  const grid = $('grid')
+  const keep = new Set(active.map((s) => s.sessionId))
+  for (const [id, t] of tiles) if (!keep.has(id)) { t.el.remove(); tiles.delete(id) }
+  active.forEach((s, i) => {
+    let t = tiles.get(s.sessionId)
+    if (!t) {
+      const el = document.createElement('button')
+      el.dataset.session = s.sessionId
+      t = { el, html: '', lastEvent: null }
+      tiles.set(s.sessionId, t)
+    }
+    const cls = `tile s-${s.state}${isStale(s) ? ' stale' : ''}`
+    if (t.el.className.replace(/\s*blip/, '') !== cls) t.el.className = cls
+    const html = tileHtml(s)
+    if (html !== t.html) { t.el.innerHTML = html; t.html = html }
+    const lastEvent = s.events.at(-1)?.t ?? null
+    if (t.lastEvent !== null && lastEvent !== t.lastEvent && s.state !== 'waiting') {
+      t.el.classList.remove('blip'); void t.el.offsetWidth; t.el.classList.add('blip')
+    }
+    t.lastEvent = lastEvent
+    if (grid.children[i] !== t.el) grid.insertBefore(t.el, grid.children[i] || null)
+  })
+
+  $('empty').innerHTML = active.length ? '' : `<div class="empty-all">No live sessions. Start <code>claude</code> anywhere with the session-board plugin loaded.</div>`
+
+  // Ended & stale
+  past.sort((a, b) => b.updatedAt - a.updatedAt)
+  $('past').hidden = !past.length
+  $('past-summary').textContent = `Ended or gone (${past.length}, last 24h)`
+  const rows = past.map((s) => `
+    <button class="row" data-session="${esc(s.sessionId)}">
+      <span class="p">${esc(projectOf(s))}${s.workItem ? ` · #${esc(s.workItem)}` : ''}</span>
+      <span class="x">${esc(s.skill ? '/' + s.skill.name : s.prompt || '')}</span>
+      <span class="w">${s.state === 'ended' ? `ended ${clock(s.updatedAt)}` : `no heartbeat since ${clock(s.updatedAt)}`}</span>
+    </button>`).join('')
+  if ($('rows').dataset.html !== rows) { $('rows').innerHTML = rows; $('rows').dataset.html = rows }
+
+  if (openId) renderDrawer()
+}
+
+// Favicon: a 2x2 board of tiles, so the tab is easy to find. When a session needs
+// you, the whole icon turns pink; when the server can't be reached, it goes grey.
+// The tile colors match the dashboard's (running, background, idle, faint).
+const FAVICON = {
+  ok: { back: '#14151b', tiles: ['#8be9fd', '#bd93f9', '#50fa7b', '#868ba0'] },
+  waiting: { back: '#ff79c6', tiles: ['#14151b', '#14151b', '#14151b', '#14151b'] },
+  error: { back: '#14151b', tiles: ['#5b6075', '#5b6075', '#5b6075', '#5b6075'] },
+}
+let faviconState = null
+function setFavicon(state) {
+  if (state === faviconState) return
+  faviconState = state
+  const { back, tiles: [a, b, c, d] } = FAVICON[state]
+  const tile = (x, y, fill) => `<rect x="${x}" y="${y}" width="10" height="10" rx="2.5" fill="${fill}"/>`
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="${back}"/>`
+    + tile(5, 5, a) + tile(17, 5, b) + tile(5, 17, c) + tile(17, 17, d) + '</svg>'
+  $('favicon').href = 'data:image/svg+xml,' + encodeURIComponent(svg)
+}
+
+function setSort(by) {
+  sortBy = by
+  try { localStorage.setItem('sessionBoard.sort', by) } catch {}
+  markSort()
+  render()
+}
+function markSort() {
+  for (const b of document.querySelectorAll('[data-sort]')) b.setAttribute('aria-pressed', String(b.dataset.sort === sortBy))
+}
+
+// Live counters tick between polls.
+setInterval(() => {
+  const now = Date.now()
+  for (const el of document.querySelectorAll('[data-since]')) {
+    el.textContent = el.dataset.prefix + dur(now - Number(el.dataset.since))
+  }
+}, 1000)
+
+// ---- Drawer ---------------------------------------------------------------
+
+function drawerHtml(s) {
+  const out = []
+  out.push(`<h4>Session</h4><dl class="kv">
+    <dt>state</dt><dd>${esc(isStale(s) ? 'no heartbeat' : STATE_WORD[s.state])}${s.endReason ? ` (${esc(s.endReason)})` : ''}</dd>
+    <dt>directory</dt><dd>${esc(s.cwd)}</dd>
+    ${s.repo?.remote ? `<dt>remote</dt><dd>${esc(s.repo.remote)}</dd>` : ''}
+    <dt>started</dt><dd>${esc(new Date(s.startedAt).toLocaleString())}</dd>
+    ${s.model ? `<dt>model</dt><dd>${esc(s.model)}</dd>` : ''}
+    ${s.context?.percent != null ? `<dt>context</dt><dd>${Math.round(s.context.percent)}% of ${Math.round(s.context.window / 1000)}k</dd>` : ''}
+    ${s.costUsd != null ? `<dt>cost</dt><dd>$${s.costUsd.toFixed(2)}</dd>` : ''}
+    <dt>session id</dt><dd>${esc(s.sessionId)}</dd>
+  </dl>
+  <button class="copy" data-copy="claude --resume ${esc(s.sessionId)}">copy  claude --resume ${esc(s.sessionId.slice(0, 8))}…</button>`)
+
+  if (s.waiting) out.push(`<h4>Waiting for you</h4><div class="ask"><b>${esc(s.waiting.kind)}</b> · ${live(s.waiting.since)}<div class="d">${esc(s.waiting.detail)}</div></div>`)
+  if (s.prompt) out.push(`<h4>Last prompt</h4><div class="quote">${esc(s.prompt)}</div>`)
+  if (s.skill) out.push(`<h4>Skill</h4><dl class="kv"><dt>skill</dt><dd>${esc(s.skill.name)}</dd>${s.skill.args ? `<dt>args</dt><dd>${esc(s.skill.args)}</dd>` : ''}${s.workItem ? `<dt>work item</dt><dd>#${esc(s.workItem)}</dd>` : ''}</dl>`)
+
+  if (s.tools.length) {
+    out.push(`<h4>Running now</h4><div class="activity">${s.tools.map((t) => `
+      <div class="act"><span class="what">${esc(t.tool)}${t.summary ? ` · ${esc(t.summary)}` : ''}</span><span class="t">${live(t.since)}</span></div>`).join('')}</div>`)
+  }
+  if (s.agents.length) {
+    out.push(`<h4>Agents</h4><table class="ag">${[...s.agents].reverse().map((a) => `
+      <tr><td class="ty">${esc(a.type)}</td>
+        <td>${esc(a.description)}${a.lastTool ? `<div class="lt">${esc(a.lastTool)}</div>` : ''}</td>
+        <td class="st" style="color:${a.status === 'done' ? 'var(--ok)' : a.status === 'failed' ? 'var(--you)' : 'var(--bg-agent)'}">
+          ${esc(a.status)} ${a.endedAt ? dur(a.endedAt - a.since) : live(a.since)}</td></tr>`).join('')}</table>`)
+  }
+  out.push(`<h4>Timeline</h4><div class="timeline">${[...s.events].reverse().map((e) => `
+    <div class="ev ${e.kind}"><span class="tm">${clock(e.t)}</span><span class="k">${esc(e.kind)}</span>
+      <span class="tx">${e.agent ? `<span class="ag">${esc(e.agent)}</span>` : ''}${esc(e.text)}</span></div>`).join('')}</div>`)
+  return out.join('')
+}
+
+function renderDrawer() {
+  const s = sessions.find((x) => x.sessionId === openId)
+  if (!s) return
+  $('d-sub').textContent = [projectOf(s), s.branch].filter(Boolean).join(' · ')
+  $('d-title').innerHTML = titleOf(s)
+  const html = drawerHtml(s)
+  if (html !== openHtml) { $('d-body').innerHTML = html; openHtml = html }
+}
+
+function openDrawer(id) {
+  openId = id
+  openHtml = ''
+  document.body.classList.add('open')
+  renderDrawer()
+  $('d-body').parentElement.scrollTop = 0
+}
+function closeDrawer() {
+  openId = null
+  document.body.classList.remove('open')
+}
+
+document.addEventListener('click', async (e) => {
+  const copy = e.target.closest('[data-copy]')
+  if (copy) {
+    try { await navigator.clipboard.writeText(copy.dataset.copy); copy.textContent = 'copied' } catch { copy.textContent = copy.dataset.copy }
+    return
+  }
+  const sort = e.target.closest('[data-sort]')
+  if (sort) return setSort(sort.dataset.sort)
+  const tile = e.target.closest('[data-session]')
+  if (tile) return openDrawer(tile.dataset.session)
+  if (e.target.closest('[data-close]')) closeDrawer()
+})
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDrawer() })
+
+// ---- Poll -----------------------------------------------------------------
+
+async function poll() {
+  const status = $('status')
+  try {
+    sessions = await loadSessions()
+    render()
+    status.className = 'status'
+    status.innerHTML = `<span class="dot"></span>${clock(Date.now())}`
+  } catch (err) {
+    setFavicon('error')
+    status.className = 'status error'
+    status.innerHTML = `<span class="dot"></span>${esc(err.message)}`
+  }
+}
+
+markSort()
+loadPhases().then(poll)
+setInterval(poll, POLL_MS)
+</script>
+</body>
+</html>
