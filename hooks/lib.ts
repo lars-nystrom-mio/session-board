@@ -215,11 +215,13 @@ export function prLinksOf(text: string): Omit<PrRec, 'at'>[] {
   return found.size > MAX_PRS_PER_TEXT ? [] : [...found.values()]
 }
 
-// Tools whose output can name a PR this session made or works on. Listings are skipped.
+// Tools whose output can name a PR this session made or works on. Listings
+// are skipped, matched as the gh or az call itself: a PR body passed in the
+// same command can mention "pr list" in prose.
 export function scansForPrs(tool: string, input: Record<string, unknown>): boolean {
   if (tool === 'Bash' || tool === 'PowerShell') {
     const command = typeof input.command === 'string' ? input.command : ''
-    return !/\bpr\s+list\b/i.test(command)
+    return !/\b(?:gh|az\s+repos)\s+pr\s+list\b/i.test(command)
   }
   return tool === 'Agent' || tool.startsWith('mcp__')
 }

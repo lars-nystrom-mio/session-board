@@ -43,6 +43,9 @@ describe('pull requests', () => {
     expect(prLinksOf(many)).toEqual([])
     expect(scansForPrs('Bash', { command: 'az repos pr list' })).toBe(false)
     expect(scansForPrs('Bash', { command: 'gh pr create --fill' })).toBe(true)
+    expect(scansForPrs('Bash', { command: 'gh pr list --state open' })).toBe(false)
+    // A PR body written in the same command mentions "pr list" in prose.
+    expect(scansForPrs('Bash', { command: "cat > body.md <<'EOF'\nSkipped for `pr list`.\nEOF\ngh pr create --body-file body.md" })).toBe(true)
     expect(scansForPrs('Read', {})).toBe(false)
     const board = freshBoard('s1', '/x', 0)
     expect(addPrs(board, prLinksOf('https://github.com/a/b/pull/1'), 1).length).toBe(1)
