@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'claude-code/testing'
-import { addPrs, deriveState, freshBoard, prLinksOf, pushEvent, scansForPrs, slashCommand, summarize, toolLabel, trimAgents, workItemOf, MAX_AGENTS, MAX_EVENTS } from './lib'
+import { addPrs, adoPrOfCommand, deriveState, freshBoard, prLinksOf, prsOfTool, pushEvent, scansForPrs, slashCommand, summarize, toolLabel, trimAgents, workItemOf, MAX_AGENTS, MAX_EVENTS } from './lib'
 
 describe('summaries', () => {
   test('a tool call becomes one short line', async () => {
@@ -43,11 +43,41 @@ describe('pull requests', () => {
     expect(prLinksOf(many)).toEqual([])
     expect(scansForPrs('Bash', { command: 'az repos pr list' })).toBe(false)
     expect(scansForPrs('Bash', { command: 'gh pr create --fill' })).toBe(true)
+    expect(scansForPrs('Bash', { command: 'gh pr list --state open' })).toBe(false)
+    // A PR body written in the same command mentions "pr list" in prose.
+    expect(scansForPrs('Bash', { command: "cat > body.md <<'EOF'\nSkipped for `pr list`.\nEOF\ngh pr create --body-file body.md" })).toBe(true)
     expect(scansForPrs('Read', {})).toBe(false)
     const board = freshBoard('s1', '/x', 0)
-    expect(addPrs(board, prLinksOf('https://github.com/a/b/pull/1'), 1)).toBe(true)
-    expect(addPrs(board, prLinksOf('https://github.com/A/B/pull/1/files'), 2)).toBe(false)
+    expect(addPrs(board, prLinksOf('https://github.com/a/b/pull/1'), 1).length).toBe(1)
+    expect(addPrs(board, prLinksOf('https://github.com/A/B/pull/1/files'), 2)).toEqual([])
     expect(board.prs.length).toBe(1)
+  })
+})
+
+describe('pull requests by number', () => {
+  const remote = 'https://dev.azure.com/mioit/Mio.M3/_git/Mio.M3.Sales'
+  const pr36067 = { url: `${remote}/pullrequest/36067`, repo: 'Mio.M3.Sales', number: 36067, host: 'ado' }
+
+  test('an az repos pr command names its PR by id', async () => {
+    const command = 'wc -c .claude/pr-body.md && az repos pr update --organization https://dev.azure.com/mioit --id 36067 --description "$(cat .claude/pr-body.md)" --query pullRequestId -o tsv; rm -r .claude/pr-body.md'
+    expect(adoPrOfCommand(command, '2696 .claude/pr-body.md\n36067', remote)).toEqual(pr36067)
+    expect(adoPrOfCommand('az repos pr create --title x --query pullRequestId -o tsv', '36067', 'https://user@dev.azure.com/mioit/Mio.M3/_git/Mio.M3.Sales')).toEqual(pr36067)
+    expect(adoPrOfCommand('az repos pr show --id 36067 -r Mio.M3.Sales', '{}', remote)).toEqual(pr36067)
+  })
+
+  test('nothing is built without an ADO remote, for another repo, or for a listing', async () => {
+    expect(adoPrOfCommand('az repos pr update --id 1', '', null)).toBe(null)
+    expect(adoPrOfCommand('az repos pr update --id 1', '', 'https://github.com/a/b.git')).toBe(null)
+    expect(adoPrOfCommand('az repos pr show --id 1 --repository Other', '', remote)).toBe(null)
+    expect(adoPrOfCommand('az repos pr list --status active', '36067', remote)).toBe(null)
+    expect(adoPrOfCommand('git push', '36067', remote)).toBe(null)
+  })
+
+  test('JSON after other output still yields the link, once', async () => {
+    const output = `2745 pr-body.md\n${JSON.stringify({ pullRequestId: 36067, repository: { webUrl: remote } }, null, 2)}`
+    expect(prsOfTool('Bash', { command: 'az repos pr show --id 36067' }, output, remote)).toContainEqual(pr36067)
+    const board = freshBoard('s1', '/x', 0)
+    expect(addPrs(board, prsOfTool('Bash', { command: 'az repos pr show --id 36067' }, output, remote), 1).length).toBe(1)
   })
 })
 

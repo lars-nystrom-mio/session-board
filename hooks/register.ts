@@ -3,6 +3,7 @@ import {
   type AgentRec,
   type Board,
   type BoardEvent,
+  type PrRec,
   type ToolRec,
   type Waiting,
   QUIET_TOOLS,
@@ -12,6 +13,7 @@ import {
   deriveState,
   freshBoard,
   prLinksOf,
+  prsOfTool,
   pushEvent,
   scansForPrs,
   slashCommand,
@@ -44,11 +46,9 @@ function event(kind: BoardEvent['kind'], text: string, agent?: string) {
   if (board) pushEvent(board, { t: now(), kind, text: clip(text, 200), agent })
 }
 
-function notePrs(text: string | undefined, agent?: string) {
-  if (!board || !text) return
-  const prs = prLinksOf(text)
-  if (!addPrs(board, prs, now())) return
-  for (const pr of prs) event('tool', `PR ${pr.repo} ${pr.host === 'github' ? '#' : '!'}${pr.number}`, agent)
+function notePrs(prs: Omit<PrRec, 'at'>[], agent?: string) {
+  if (!board) return
+  for (const pr of addPrs(board, prs, now())) event('tool', `PR ${pr.repo} ${pr.host === 'github' ? '#' : '!'}${pr.number}`, agent)
 }
 
 function agentName(agentId?: string): string | undefined {
@@ -257,7 +257,7 @@ async function turnStarted($: EngineInterface, text: string) {
     // A subagent reporting back, not the person: keep the prompt as it was.
     const from = text.match(/^\s*<[^>]*\sfrom="([^"]*)"/)?.[1]
     event('agent', `report from ${agentName(from) ?? 'a subagent'}`)
-    notePrs(text, agentName(from))
+    notePrs(prLinksOf(text), agentName(from))
   } else if (text.trim()) {
     const slash = slashCommand(text)
     const shown = slash ? `/${slash.name} ${slash.args}`.trim() : text
@@ -265,7 +265,7 @@ async function turnStarted($: EngineInterface, text: string) {
     b.promptAt = now()
     event('prompt', shown)
     if (slash) setSkill(slash.name, slash.args)
-    notePrs(text)
+    notePrs(prLinksOf(text))
     b.workItem = workItemOf(shown, false) ?? b.workItem
   }
   schedule($)
@@ -325,9 +325,9 @@ async function toolStarted($: EngineInterface, tool: string, input: Record<strin
   return rec
 }
 
-function toolEnded($: EngineInterface, rec: ToolRec, tool: string, outcome: 'ok' | 'denied' | 'failed', output?: string) {
+function toolEnded($: EngineInterface, rec: ToolRec, tool: string, outcome: 'ok' | 'denied' | 'failed', prs: Omit<PrRec, 'at'>[]) {
   tools.delete(rec.id)
-  if (outcome === 'ok') notePrs(output, agentName(rec.agentId))
+  notePrs(prs, agentName(rec.agentId))
   if (outcome === 'denied') event('error', `${rec.tool} denied`, agentName(rec.agentId))
   if (outcome === 'failed') event('error', `${rec.tool} failed${rec.summary ? `: ${rec.summary}` : ''}`, agentName(rec.agentId))
   if (board?.waiting && (board.waiting.tool === tool || board.waiting.kind === 'notification')) board.waiting = null
@@ -394,14 +394,15 @@ export const register: Register = (on) => {
     const rec = await toolStarted($, e.tool, e as unknown as Record<string, unknown>, e.tool_use_id, e.agentId)
     if (!rec) return next(e)
     let outcome: 'ok' | 'denied' | 'failed' = 'failed'
-    let output: string | undefined
+    let prs: Omit<PrRec, 'at'>[] = []
     try {
       const result = await next(e)
       outcome = result.deny !== undefined ? 'denied' : result.isError ? 'failed' : 'ok'
-      if (outcome === 'ok' && scansForPrs(e.tool, e as unknown as Record<string, unknown>)) output = result.text
+      const input = e as unknown as Record<string, unknown>
+      if (outcome === 'ok' && scansForPrs(e.tool, input)) prs = prsOfTool(e.tool, input, result.text ?? '', board?.repo?.remote ?? null)
       return result
     } finally {
-      toolEnded($, rec, e.tool, outcome, output)
+      toolEnded($, rec, e.tool, outcome, prs)
     }
   }).catch(($, e, next) => next(e)) // the board only observes: on failure the call goes on
 

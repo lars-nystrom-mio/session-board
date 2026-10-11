@@ -169,16 +169,33 @@ function decode(text: string): string {
 }
 
 // `az repos pr create/show` prints JSON with the id and the repo's web URL,
-// but no link to the PR itself.
+// but no link to the PR itself. The JSON can follow other output, so it's
+// matched rather than parsed; more than one id is a listing.
 function adoJsonPrUrl(text: string): string | null {
-  if (!text.trimStart().startsWith('{')) return null
-  try {
-    const obj = JSON.parse(text) as { pullRequestId?: unknown; repository?: { webUrl?: unknown } }
-    const web = obj.repository?.webUrl
-    return typeof obj.pullRequestId === 'number' && typeof web === 'string' ? `${web.replace(/\/+$/, '')}/pullrequest/${obj.pullRequestId}` : null
-  } catch {
-    return null
-  }
+  const ids = new Set([...text.matchAll(/"pullRequestId":\s*(\d+)/g)].map((m) => m[1]))
+  const web = text.match(/"webUrl":\s*"(https:\/\/[^"]*\/_git\/[^"/]+)"/)?.[1]
+  const [id] = ids
+  return ids.size === 1 && web ? `${web}/pullrequest/${id}` : null
+}
+
+// The web URL of an Azure DevOps repo from its remote, and the repo's name.
+function adoRepoOf(remote: string): { web: string; repo: string } | null {
+  const m = remote.match(/^https:\/\/(?:[^@/]+@)?((?:dev\.azure\.com\/[^/]+|[\w-]+\.visualstudio\.com)\/[^/]+\/_git\/([^/?#\s]+))/i)
+  return m?.[1] && m[2] ? { web: `https://${m[1]}`, repo: decode(m[2]) } : null
+}
+
+// `az repos pr update --id 36067 --query pullRequestId -o tsv` names the PR
+// only by number, so its link is built from the session repo's remote. Skipped
+// when the command names another repository.
+export function adoPrOfCommand(command: string, output: string, remote: string | null): Omit<PrRec, 'at'> | null {
+  const call = command.match(/\baz\s+repos\s+pr\s+(\w[\w-]*)[^;&|\n]*/i)
+  const ado = remote ? adoRepoOf(remote) : null
+  if (!call || !ado || call[1]?.toLowerCase() === 'list') return null
+  const args = call[0]
+  const named = args.match(/\s(?:--repository|-r)[=\s]+["']?([^"'\s]+)/)?.[1]
+  if (named && decode(named).toLowerCase() !== ado.repo.toLowerCase()) return null
+  const id = args.match(/\s--id[=\s]+["']?(\d+)/)?.[1] ?? (call[1]?.toLowerCase() === 'create' ? output.trim().match(/(?:^|\n)(\d+)$/)?.[1] : undefined)
+  return id ? { url: `${ado.web}/pullrequest/${id}`, repo: ado.repo, number: Number(id), host: 'ado' } : null
 }
 
 // The PR links in a tool's output, a prompt or an agent's report.
@@ -198,23 +215,37 @@ export function prLinksOf(text: string): Omit<PrRec, 'at'>[] {
   return found.size > MAX_PRS_PER_TEXT ? [] : [...found.values()]
 }
 
-// Tools whose output can name a PR this session made or works on. Listings are skipped.
+// Tools whose output can name a PR this session made or works on. Listings
+// are skipped, matched as the gh or az call itself: a PR body passed in the
+// same command can mention "pr list" in prose.
 export function scansForPrs(tool: string, input: Record<string, unknown>): boolean {
   if (tool === 'Bash' || tool === 'PowerShell') {
     const command = typeof input.command === 'string' ? input.command : ''
-    return !/\bpr\s+list\b/i.test(command)
+    return !/\b(?:gh|az\s+repos)\s+pr\s+list\b/i.test(command)
   }
   return tool === 'Agent' || tool.startsWith('mcp__')
 }
 
-// Adds PRs not seen yet; returns whether any were new.
-export function addPrs(board: Board, prs: Omit<PrRec, 'at'>[], now: number): boolean {
-  let added = false
+// The PRs a finished tool call names: links in its output, or for an
+// `az repos pr` command, the PR it acts on.
+export function prsOfTool(tool: string, input: Record<string, unknown>, output: string, remote: string | null): Omit<PrRec, 'at'>[] {
+  const found = prLinksOf(output)
+  if (tool === 'Bash' || tool === 'PowerShell') {
+    const byNumber = adoPrOfCommand(typeof input.command === 'string' ? input.command : '', output, remote)
+    if (byNumber) found.push(byNumber)
+  }
+  return found
+}
+
+// Adds PRs not seen yet and returns those.
+export function addPrs(board: Board, prs: Omit<PrRec, 'at'>[], now: number): PrRec[] {
+  const added: PrRec[] = []
   for (const pr of prs) {
     const same = (p: PrRec) => p.host === pr.host && p.number === pr.number && p.repo.toLowerCase() === pr.repo.toLowerCase()
     if (board.prs.some(same)) continue
-    board.prs.push({ ...pr, at: now })
-    added = true
+    const rec = { ...pr, at: now }
+    board.prs.push(rec)
+    added.push(rec)
   }
   if (board.prs.length > MAX_PRS) board.prs.splice(0, board.prs.length - MAX_PRS)
   return added
