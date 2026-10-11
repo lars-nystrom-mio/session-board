@@ -16,18 +16,19 @@ Nothing is sent anywhere. The files stay in `~/.claude/board/`.
 
 ## Install
 
-From a terminal:
+Clone the repo and add the folder as a marketplace:
 
 ```
-claude plugin marketplace add C:\Workspace\session-board
+git clone https://github.com/lars-nystrom-mio/session-board.git
+claude plugin marketplace add ./session-board
 claude plugin install session-board@session-board --scope user
 ```
 
-The marketplace is this folder, so Claude Code reads the plugin from here, not
+The marketplace is the cloned folder, so Claude Code reads the plugin from here, not
 from a copy. After a `git pull` or an edit, run `/reload-plugins` in the
 sessions you want to pick it up. Sessions started later load it on their own.
 
-While developing, `claude --plugin-dir C:\Workspace\session-board` loads it in
+While developing, `claude --plugin-dir <path to session-board>` loads it in
 one session and reloads it on every save.
 
 ## Run the dashboard

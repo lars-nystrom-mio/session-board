@@ -24,7 +24,7 @@ describe('summaries', () => {
 
 describe('board', () => {
   test('state follows what the session is doing', async () => {
-    const board = freshBoard('s1', 'C:/Workspace/app', 0)
+    const board = freshBoard('s1', 'C:/code/app', 0)
     expect(board.project).toBe('app')
     expect(deriveState(board, false)).toBe('idle')
     expect(deriveState(board, true)).toBe('running')
