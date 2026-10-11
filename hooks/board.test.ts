@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'claude-code/testing'
-import { deriveState, freshBoard, pushEvent, slashCommand, summarize, toolLabel, trimAgents, workItemOf, MAX_AGENTS, MAX_EVENTS } from './lib'
+import { addPrs, deriveState, freshBoard, prLinksOf, pushEvent, scansForPrs, slashCommand, summarize, toolLabel, trimAgents, workItemOf, MAX_AGENTS, MAX_EVENTS } from './lib'
 
 describe('summaries', () => {
   test('a tool call becomes one short line', async () => {
@@ -19,6 +19,35 @@ describe('summaries', () => {
     expect(workItemOf('continue on #1234', false)).toBe('1234')
     expect(workItemOf('deliver 1234', false)).toBe(null)
     expect(workItemOf('1234, use autocomplete', true)).toBe('1234')
+  })
+})
+
+describe('pull requests', () => {
+  test('PR links are found in GitHub and Azure DevOps output', async () => {
+    expect(prLinksOf('Created https://github.com/acme/app/pull/42.')).toEqual([
+      { url: 'https://github.com/acme/app/pull/42', repo: 'app', number: 42, host: 'github' },
+    ])
+    expect(prLinksOf('see https://dev.azure.com/org/My%20Proj/_git/Api/pullrequest/123?_a=files')[0])
+      .toEqual({ url: 'https://dev.azure.com/org/My%20Proj/_git/Api/pullrequest/123', repo: 'Api', number: 123, host: 'ado' })
+    expect(prLinksOf('https://org.visualstudio.com/P/_git/Repo/pullrequest/7')[0]?.number).toBe(7)
+    expect(prLinksOf('https://github.com/acme/app/pull/new/my-branch')).toEqual([])
+  })
+
+  test('az repos pr JSON becomes a link', async () => {
+    const json = JSON.stringify({ pullRequestId: 55, repository: { webUrl: 'https://dev.azure.com/org/P/_git/Repo' } }, null, 2)
+    expect(prLinksOf(json)).toEqual([{ url: 'https://dev.azure.com/org/P/_git/Repo/pullrequest/55', repo: 'Repo', number: 55, host: 'ado' }])
+  })
+
+  test('listings are ignored and duplicates kept once', async () => {
+    const many = [1, 2, 3, 4].map((n) => `https://github.com/a/b/pull/${n}`).join(' ')
+    expect(prLinksOf(many)).toEqual([])
+    expect(scansForPrs('Bash', { command: 'az repos pr list' })).toBe(false)
+    expect(scansForPrs('Bash', { command: 'gh pr create --fill' })).toBe(true)
+    expect(scansForPrs('Read', {})).toBe(false)
+    const board = freshBoard('s1', '/x', 0)
+    expect(addPrs(board, prLinksOf('https://github.com/a/b/pull/1'), 1)).toBe(true)
+    expect(addPrs(board, prLinksOf('https://github.com/A/B/pull/1/files'), 2)).toBe(false)
+    expect(board.prs.length).toBe(1)
   })
 })
 
