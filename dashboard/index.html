@@ -153,6 +153,13 @@
   }
 
   .t-foot { margin-top: 12px; display: flex; align-items: center; gap: 12px; font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
+  .prs { margin-left: auto; display: flex; gap: 6px; min-width: 0; overflow: hidden; }
+  .pr {
+    flex: none; color: var(--run); padding: 1px 6px; border-radius: 4px; cursor: pointer;
+    background: color-mix(in srgb, var(--run) 10%, transparent);
+  }
+  .pr:hover { text-decoration: underline; }
+  .pr-list a { color: var(--run); }
   .meter { flex: 1; max-width: 120px; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
   .meter i { display: block; height: 100%; background: var(--muted); border-radius: 2px; transition: width .6s ease; }
   .meter.hot i { background: var(--warn); }
@@ -389,6 +396,8 @@ async function loadPhases() {
   phases = [...own, ...DEFAULT_PHASES]
 }
 
+const prName = (p) => `${p.host === 'github' ? '#' : '!'}${p.number}`
+
 const firstSentence = (p) => p.split(/(?<=[.?!])\s|\n/)[0].slice(0, 90)
 
 function titleOf(s) {
@@ -453,6 +462,8 @@ function tileHtml(s) {
       ${s.costUsd != null ? `<span>$${s.costUsd.toFixed(2)}</span>` : ''}
       <span>${s.turns} turn${s.turns === 1 ? '' : 's'}</span>
       ${s.model ? `<span>${esc(shortModel(s.model))}</span>` : ''}
+      ${s.prs?.length ? `<span class="prs">${[...s.prs].reverse().map((p) => `
+        <span class="pr" data-href="${esc(p.url)}" title="${esc(p.repo)} ${prName(p)}">PR ${prName(p)}</span>`).join('')}</span>` : ''}
     </div>`)
   return parts.join('')
 }
@@ -583,6 +594,11 @@ function drawerHtml(s) {
   if (s.prompt) out.push(`<h4>Last prompt</h4><div class="quote">${esc(s.prompt)}</div>`)
   if (s.skill) out.push(`<h4>Skill</h4><dl class="kv"><dt>skill</dt><dd>${esc(s.skill.name)}</dd>${s.skill.args ? `<dt>args</dt><dd>${esc(s.skill.args)}</dd>` : ''}${s.workItem ? `<dt>work item</dt><dd>#${esc(s.workItem)}</dd>` : ''}</dl>`)
 
+  if (s.prs?.length) {
+    out.push(`<h4>Pull requests</h4><dl class="kv pr-list">${[...s.prs].reverse().map((p) => `
+      <dt>${esc(prName(p))}</dt><dd><a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.repo)}</a> · ${clock(p.at)}</dd>`).join('')}</dl>`)
+  }
+
   if (s.tools.length) {
     out.push(`<h4>Running now</h4><div class="activity">${s.tools.map((t) => `
       <div class="act"><span class="what">${esc(t.tool)}${t.summary ? ` · ${esc(t.summary)}` : ''}</span><span class="t">${live(t.since)}</span></div>`).join('')}</div>`)
@@ -627,6 +643,9 @@ document.addEventListener('click', async (e) => {
     try { await navigator.clipboard.writeText(copy.dataset.copy); copy.textContent = 'copied' } catch { copy.textContent = copy.dataset.copy }
     return
   }
+  // A PR link on a tile: the tile is a button, so it can't hold a real <a>.
+  const pr = e.target.closest('[data-href]')
+  if (pr) return void window.open(pr.dataset.href, '_blank', 'noopener')
   const sort = e.target.closest('[data-sort]')
   if (sort) return setSort(sort.dataset.sort)
   const tile = e.target.closest('[data-session]')

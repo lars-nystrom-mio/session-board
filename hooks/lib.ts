@@ -29,6 +29,14 @@ export type BoardEvent = {
   agent?: string
 }
 
+export type PrRec = {
+  url: string
+  repo: string
+  number: number
+  host: 'github' | 'ado'
+  at: number
+}
+
 export type Waiting = {
   kind: 'permission' | 'question' | 'plan' | 'notification'
   detail: string
@@ -57,6 +65,7 @@ export type Board = {
   skill: { name: string; args: string; at: number } | null
   activeSkill: string | null
   workItem: string | null
+  prs: PrRec[]
   turns: number
   tools: ToolRec[]
   agents: AgentRec[]
@@ -67,6 +76,7 @@ export type Board = {
 
 export const MAX_EVENTS = 80
 export const MAX_AGENTS = 30
+export const MAX_PRS = 6
 
 // Tools too frequent to be worth a line in the timeline. They still show as
 // the session's current activity while they run.
@@ -143,6 +153,73 @@ export function workItemOf(text: string, allowBare: boolean): string | null {
   return bare?.[1] ?? null
 }
 
+// A pull request's web URL on GitHub or Azure DevOps (both host styles).
+const PR_URL =
+  /https:\/\/(?:github\.com\/[\w.-]+\/([\w.-]+)\/pull|(?:dev\.azure\.com\/[^/\s"'<>]+|[\w-]+\.visualstudio\.com)\/[^/\s"'<>]+\/_git\/([^/\s"'<>]+)\/pullrequest)\/(\d+)/gi
+
+// More PRs than this in one piece of text is a listing, not this session's PR.
+const MAX_PRS_PER_TEXT = 3
+
+function decode(text: string): string {
+  try {
+    return decodeURIComponent(text)
+  } catch {
+    return text
+  }
+}
+
+// `az repos pr create/show` prints JSON with the id and the repo's web URL,
+// but no link to the PR itself.
+function adoJsonPrUrl(text: string): string | null {
+  if (!text.trimStart().startsWith('{')) return null
+  try {
+    const obj = JSON.parse(text) as { pullRequestId?: unknown; repository?: { webUrl?: unknown } }
+    const web = obj.repository?.webUrl
+    return typeof obj.pullRequestId === 'number' && typeof web === 'string' ? `${web.replace(/\/+$/, '')}/pullrequest/${obj.pullRequestId}` : null
+  } catch {
+    return null
+  }
+}
+
+// The PR links in a tool's output, a prompt or an agent's report.
+export function prLinksOf(text: string): Omit<PrRec, 'at'>[] {
+  const found = new Map<string, Omit<PrRec, 'at'>>()
+  const json = adoJsonPrUrl(text)
+  for (const source of json ? [json, text] : [text]) {
+    for (const m of source.matchAll(PR_URL)) {
+      const github = m[1] !== undefined
+      const repo = decode(m[1] ?? m[2] ?? '')
+      const number = Number(m[3])
+      const url = m[0]
+      const key = `${github ? 'github' : 'ado'}:${repo.toLowerCase()}:${number}`
+      if (!found.has(key)) found.set(key, { url, repo, number, host: github ? 'github' : 'ado' })
+    }
+  }
+  return found.size > MAX_PRS_PER_TEXT ? [] : [...found.values()]
+}
+
+// Tools whose output can name a PR this session made or works on. Listings are skipped.
+export function scansForPrs(tool: string, input: Record<string, unknown>): boolean {
+  if (tool === 'Bash' || tool === 'PowerShell') {
+    const command = typeof input.command === 'string' ? input.command : ''
+    return !/\bpr\s+list\b/i.test(command)
+  }
+  return tool === 'Agent' || tool.startsWith('mcp__')
+}
+
+// Adds PRs not seen yet; returns whether any were new.
+export function addPrs(board: Board, prs: Omit<PrRec, 'at'>[], now: number): boolean {
+  let added = false
+  for (const pr of prs) {
+    const same = (p: PrRec) => p.host === pr.host && p.number === pr.number && p.repo.toLowerCase() === pr.repo.toLowerCase()
+    if (board.prs.some(same)) continue
+    board.prs.push({ ...pr, at: now })
+    added = true
+  }
+  if (board.prs.length > MAX_PRS) board.prs.splice(0, board.prs.length - MAX_PRS)
+  return added
+}
+
 export function pushEvent(board: Board, event: BoardEvent): void {
   board.events.push(event)
   if (board.events.length > MAX_EVENTS) board.events.splice(0, board.events.length - MAX_EVENTS)
@@ -198,6 +275,7 @@ export function freshBoard(sessionId: string, cwd: string, now: number): Board {
     skill: null,
     activeSkill: null,
     workItem: null,
+    prs: [],
     turns: 0,
     tools: [],
     agents: [],
