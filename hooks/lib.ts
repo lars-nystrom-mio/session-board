@@ -53,6 +53,8 @@ export type Board = {
   project: string
   repo: { name: string | null; root: string; remote: string | null } | null
   branch: string | null
+  // The session's title, which Claude Code also puts on the terminal tab.
+  tabTitle?: string | null
   model: string | null
   startedAt: number
   updatedAt: number
@@ -251,6 +253,29 @@ export function addPrs(board: Board, prs: Omit<PrRec, 'at'>[], now: number): PrR
   return added
 }
 
+// The folder under ~/.claude/projects that holds a session's transcript:
+// its cwd with every character but letters and digits made a dash.
+export function projectDirName(cwd: string): string {
+  return cwd.replace(/[^a-zA-Z0-9]/g, '-')
+}
+
+// The session's title from its transcript: the last /rename, else the last
+// title Claude Code generated. The terminal tab shows the same one.
+export function sessionTitleOf(transcript: string): string | null {
+  let custom: string | null = null
+  let ai: string | null = null
+  for (const line of transcript.split('\n')) {
+    if (!line.includes('-title"')) continue
+    try {
+      const rec = JSON.parse(line) as { type?: string; customTitle?: unknown; aiTitle?: unknown }
+      if (rec.type === 'custom-title' && typeof rec.customTitle === 'string') custom = rec.customTitle
+      if (rec.type === 'ai-title' && typeof rec.aiTitle === 'string') ai = rec.aiTitle
+    } catch {}
+  }
+  const title = (custom ?? ai)?.trim()
+  return title ? clip(title, 120) : null
+}
+
 export function pushEvent(board: Board, event: BoardEvent): void {
   board.events.push(event)
   if (board.events.length > MAX_EVENTS) board.events.splice(0, board.events.length - MAX_EVENTS)
@@ -295,6 +320,7 @@ export function freshBoard(sessionId: string, cwd: string, now: number): Board {
     project: basename(cwd),
     repo: null,
     branch: null,
+    tabTitle: null,
     model: null,
     startedAt: now,
     updatedAt: now,

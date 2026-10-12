@@ -14,8 +14,10 @@ import {
   freshBoard,
   prLinksOf,
   prsOfTool,
+  projectDirName,
   pushEvent,
   scansForPrs,
+  sessionTitleOf,
   slashCommand,
   summarize,
   toolLabel,
@@ -38,6 +40,7 @@ let writeTimer: Timer | null = null
 let heartbeat: Timer | null = null
 let ticks = 0
 let hasWarned = false
+let transcriptPath = ''
 const tools = new Map<string, ToolRec>()
 
 const now = () => Date.now()
@@ -56,12 +59,16 @@ function agentName(agentId?: string): string | undefined {
   return board.agents.find((a) => a.agentId === agentId)?.type ?? 'subagent'
 }
 
+async function claudeDir($: EngineInterface): Promise<string> {
+  const config = await $.env.get('CLAUDE_CONFIG_DIR')
+  const home = (await $.env.get('USERPROFILE')) || (await $.env.get('HOME')) || '~'
+  return (config || `${home}/.claude`).replace(/\\/g, '/')
+}
+
 async function boardDir($: EngineInterface): Promise<string> {
   const explicit = await $.env.get('SESSION_BOARD_DIR')
   if (explicit) return explicit.replace(/\\/g, '/')
-  const config = await $.env.get('CLAUDE_CONFIG_DIR')
-  const home = (await $.env.get('USERPROFILE')) || (await $.env.get('HOME')) || '~'
-  return `${(config || `${home}/.claude`).replace(/\\/g, '/')}/board`
+  return `${await claudeDir($)}/board`
 }
 
 async function flush($: EngineInterface) {
@@ -91,6 +98,33 @@ function schedule($: EngineInterface) {
     writeTimer = null
     void flush($)
   })
+}
+
+// The session's transcript. Hooks can't take its path from the classic events,
+// as an organization's security plugin may bypass a plugin's classic hooks.
+// Usually it's under the folder named after the cwd; else it's searched for.
+async function findTranscript($: EngineInterface): Promise<string> {
+  if (!board) return ''
+  const projects = `${await claudeDir($)}/projects`
+  const name = `${board.sessionId}.jsonl`
+  const guess = `${projects}/${projectDirName(board.cwd)}/${name}`
+  if (await $.fs.exists(guess)) return guess
+  for (const dir of await $.fs.list(projects)) {
+    const path = `${projects}/${dir.name}/${name}`
+    if (dir.kind === 'dir' && (await $.fs.exists(path))) return path
+  }
+  return ''
+}
+
+// The title is in the transcript from the first turn on, and changes with /rename.
+async function readTitle($: EngineInterface) {
+  if (!board) return
+  try {
+    transcriptPath ||= await findTranscript($)
+    if (!transcriptPath) return
+    const title = sessionTitleOf(await $.fs.read(transcriptPath))
+    if (title && board) board.tabTitle = title
+  } catch {}
 }
 
 async function refreshSlow($: EngineInterface) {
@@ -176,6 +210,8 @@ async function init($: EngineInterface, cwd: string, interactive: boolean, reaso
   board.interactive = interactive
   board.tools = []
   board.prs ??= []
+  board.tabTitle ??= null
+  transcriptPath = ''
   board.waiting = null
   if (board.state === 'running') board.state = 'idle'
   mainRunning = false
@@ -188,6 +224,7 @@ async function init($: EngineInterface, cwd: string, interactive: boolean, reaso
 
   await copyDashboard($, dir)
   await refreshSlow($)
+  await readTitle($)
   await flush($)
 
   heartbeat?.cancel()
@@ -288,6 +325,7 @@ async function turnCompleted($: EngineInterface, e: TurnEnd) {
     board.waiting = null
     event('turn', e.isAborted ? 'interrupted' : `turn done in ${secs}s`)
     await refreshSlow($)
+    await readTitle($)
   }
   schedule($)
 }

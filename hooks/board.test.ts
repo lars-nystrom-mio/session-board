@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'claude-code/testing'
-import { addPrs, adoPrOfCommand, deriveState, freshBoard, prLinksOf, prsOfTool, pushEvent, scansForPrs, slashCommand, summarize, toolLabel, trimAgents, workItemOf, MAX_AGENTS, MAX_EVENTS } from './lib'
+import { addPrs, adoPrOfCommand, deriveState, freshBoard, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, summarize, toolLabel, trimAgents, workItemOf, MAX_AGENTS, MAX_EVENTS } from './lib'
 
 describe('summaries', () => {
   test('a tool call becomes one short line', async () => {
@@ -78,6 +78,21 @@ describe('pull requests by number', () => {
     expect(prsOfTool('Bash', { command: 'az repos pr show --id 36067' }, output, remote)).toContainEqual(pr36067)
     const board = freshBoard('s1', '/x', 0)
     expect(addPrs(board, prsOfTool('Bash', { command: 'az repos pr show --id 36067' }, output, remote), 1).length).toBe(1)
+  })
+})
+
+describe('terminal tab title', () => {
+  test('the last generated title, unless the session was renamed', async () => {
+    const ai = (t: string) => JSON.stringify({ type: 'ai-title', aiTitle: t, sessionId: 's1' })
+    const lines = [JSON.stringify({ type: 'user', message: { content: 'hi "-title" here' } }), ai('First'), '{broken', ai('Terminal tab name on card')]
+    expect(sessionTitleOf(lines.join('\n'))).toBe('Terminal tab name on card')
+    expect(sessionTitleOf([JSON.stringify({ type: 'custom-title', customTitle: 'my tab' }), ...lines].join('\n'))).toBe('my tab')
+    expect(sessionTitleOf(JSON.stringify({ type: 'user' }))).toBe(null)
+  })
+
+  test('the transcript folder is named after the cwd', async () => {
+    expect(projectDirName('C:\\Users\\me\\.claude')).toBe('C--Users-me--claude')
+    expect(projectDirName('C:\\Workspace\\session-board')).toBe('C--Workspace-session-board')
   })
 })
 

@@ -62,7 +62,9 @@ credentials and every session's transcript.
 | **idle** | done, your move |
 | ended / no heartbeat | under "Ended or gone"; no heartbeat for 20 s means the session crashed or was closed |
 
-Each tile also shows the project and branch, the work item and skill (when a
+Each tile also shows the project and branch, the name on the session's
+terminal tab (the title Claude Code gives the session, or the one set with
+`/rename`), the work item and skill (when a
 skill such as `/deliver-story 1234` is running), a phase inferred from the
 running subagent, the tools in flight with live timers, the subagents with
 their status, and context use, cost and turn count. Click a tile for the
