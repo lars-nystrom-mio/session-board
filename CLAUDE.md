@@ -66,6 +66,9 @@ SESSION_BOARD_DIR=<scratch dir> claude -p --plugin-dir . --model haiku "<prompt 
 
 - In Git Bash `~` can be `H:\`, not the profile folder. Use `$USERPROFILE` or
   the full `C:/Users/...` path for anything under `.claude`.
+- Git Bash rewrites a prompt like `"/rename x"` into a Windows path. Set
+  `MSYS_NO_PATHCONV=1` for that, and then pass Windows-style paths
+  (`C:\...`) in `SESSION_BOARD_DIR`, or the board lands in `C:\c\...`.
 - Writing regexes through a bash heredoc into Python mangled `\b` into a
   backspace character. Edit TypeScript with the Edit tool instead.
 
@@ -74,6 +77,17 @@ SESSION_BOARD_DIR=<scratch dir> claude -p --plugin-dir . --model haiku "<prompt 
 - The **needs you** state: `classic.PermissionRequest`, `AskUserQuestion`,
   `ExitPlanMode` and the `permission_prompt` notification. These only happen in
   interactive sessions, so watch a real tile go pink and clear again.
+- The tab title on a live interactive tile. `readTitle` reads the newest
+  `custom-title` or `ai-title` record from the transcript at session start and
+  when a main turn ends. A headless `/rename` showed up on the tile; headless
+  sessions get no `ai-title`.
+- Whether permission prompts turn a tile pink. Questions do: `AskUserQuestion`
+  arrives through `tool.call`. A permission prompt arrives only through
+  `classic.PermissionRequest` or `classic.Notification`, and no status file has
+  recorded one yet. In this organization `cc-plugin-sec-default` bypasses a user
+  plugin's `classic.SessionStart` and `classic.UserPromptSubmit` (the debug log
+  says "bypassed by cc-plugin-sec-default"), so these two may be bypassed as
+  well. That's also why the transcript path is computed from the session id.
 - Whether `classic.PermissionRequest` fires in auto mode when the classifier
   decides instead of a person.
 
