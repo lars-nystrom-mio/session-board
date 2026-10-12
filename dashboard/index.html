@@ -74,10 +74,17 @@
   }
   .tile:hover { background: var(--card-hover); }
   .tile:focus-visible { outline: 2px solid var(--run); outline-offset: 2px; }
+  /* The sweep moves with transform and the glow fades with opacity: both run on
+     the compositor. Animating background-position or box-shadow repaints the
+     tile on every frame. */
   .tile::before {
-    content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px; opacity: 0;
+    content: ""; position: absolute; left: 0; top: 0; width: 50%; height: 2px; opacity: 0;
     background: linear-gradient(90deg, transparent, var(--accent, var(--run)), transparent);
-    background-size: 50% 100%; background-repeat: no-repeat;
+    pointer-events: none;
+  }
+  .tile::after {
+    content: ""; position: absolute; inset: 0; border-radius: inherit; opacity: 0; pointer-events: none;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--you) 70%, transparent), inset 0 0 26px -8px color-mix(in srgb, var(--you) 45%, transparent);
   }
   .tile.s-running { border-color: color-mix(in srgb, var(--run) 30%, var(--line)); }
   .tile.s-running::before { opacity: 1; animation: sweep 1.8s linear infinite; }
@@ -85,12 +92,12 @@
   .tile.s-background::before { opacity: .8; animation: sweep 3.6s linear infinite; }
   .tile.s-waiting {
     border-color: var(--you);
-    animation: enter .35s ease both, glow 2.2s ease-in-out infinite;
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--you) 30%, transparent), 0 6px 22px -12px color-mix(in srgb, var(--you) 50%, transparent);
   }
+  .tile.s-waiting::after { animation: glow 2.2s ease-in-out infinite; }
   .tile.s-idle { opacity: .9; }
   .tile.stale { opacity: .5; filter: saturate(.3); }
   .tile.blip { animation: enter .35s ease both, blip .7s ease-out; }
-  .tile.s-waiting.blip { animation: enter .35s ease both, glow 2.2s ease-in-out infinite; }
 
   .t-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
   .state-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--faint); }
@@ -233,17 +240,14 @@
   .ev.skill .k { color: var(--warn); }
   .ev.tool .tx { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
 
-  @keyframes sweep { from { background-position: -50% 0; } to { background-position: 150% 0; } }
+  @keyframes sweep { from { transform: translateX(-50%); } to { transform: translateX(150%); } }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
   @keyframes spin { to { transform: rotate(360deg); } }
   @keyframes enter { from { opacity: 0; transform: translateY(6px) scale(.985); } }
-  @keyframes glow {
-    0%, 100% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--you) 30%, transparent), 0 6px 22px -12px color-mix(in srgb, var(--you) 50%, transparent); }
-    50% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--you) 70%, transparent), 0 10px 34px -10px color-mix(in srgb, var(--you) 80%, transparent); }
-  }
+  @keyframes glow { 0%, 100% { opacity: 0; } 50% { opacity: 1; } }
   @keyframes blip { 0% { background: color-mix(in srgb, var(--run) 10%, var(--card)); } 100% { background: var(--card); } }
   @media (prefers-reduced-motion: reduce) {
-    *, *::before { animation: none !important; transition: none !important; }
+    *, *::before, *::after { animation: none !important; transition: none !important; }
   }
 
   @media (max-width: 640px) {
@@ -297,8 +301,11 @@
 
 <script>
 const POLL_MS = 2000
+const HIDDEN_POLL_MS = 15_000    // tab not visible: only the title and favicon update
 const STALE_MS = 20_000          // no heartbeat for this long: the session is gone
 const HIDE_AFTER_MS = 24 * 3600_000
+const RECHECK_STALE_MS = 30_000  // how often to refetch a session without heartbeat
+const RECHECK_GONE_MS = 5 * 60_000  // ...and one hidden for being older than HIDE_AFTER_MS
 
 // Phases by subagent type, newest running agent first, then by running skill.
 // Your own rules go in phases.json next to this page and are tried first:
@@ -318,6 +325,9 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
 
 let sessions = []
 const endedCache = new Map()   // file -> board of an ended session (never changes again)
+// file -> { board, until }: a session that stopped without ending (crashed, killed).
+// It may still come back, so it's refetched now and then rather than every poll.
+const quietCache = new Map()
 const tiles = new Map()        // sessionId -> { el, html, lastEvent }
 let sortBy = 'started'
 try { sortBy = localStorage.getItem('sessionBoard.sort') || sortBy } catch {}
@@ -345,12 +355,18 @@ async function loadSessions() {
     .filter((h) => h.endsWith('.json'))
   const boards = await Promise.all(files.map(async (f) => {
     if (endedCache.has(f)) return endedCache.get(f)
+    const quiet = quietCache.get(f)
+    if (quiet && Date.now() < quiet.until) return quiet.board
     try {
       const board = JSON.parse(await fetchText('sessions/' + encodeURIComponent(f)))
+      const age = Date.now() - board.updatedAt
       if (board.state === 'ended') endedCache.set(f, board)
+      else if (age > HIDE_AFTER_MS) quietCache.set(f, { board, until: Date.now() + RECHECK_GONE_MS })
+      else if (age > STALE_MS) quietCache.set(f, { board, until: Date.now() + RECHECK_STALE_MS })
+      else quietCache.delete(f)
       return board
     } catch {
-      return null  // mid-write or malformed: next poll
+      return quiet?.board ?? null  // mid-write or malformed: next poll
     }
   }))
   return boards.filter(Boolean)
@@ -367,7 +383,8 @@ function dur(ms) {
   if (h < 24) return `${h}h ${String(m % 60).padStart(2, '0')}m`
   return `${Math.floor(h / 24)}d ${h % 24}h`
 }
-const live = (since, prefix = '') => `<span data-since="${since}" data-prefix="${esc(prefix)}">${esc(prefix)}${dur(Date.now() - since)}</span>`
+// Left empty so a tile's HTML only changes when its data does; tick() fills it in.
+const live = (since, prefix = '') => `<span data-since="${since}" data-prefix="${esc(prefix)}"></span>`
 const clock = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 
 const isStale = (s) => s.state !== 'ended' && Date.now() - s.updatedAt > STALE_MS
@@ -501,9 +518,12 @@ function render() {
     ['bg', count('background'), 'background'],
     ['', count('idle'), 'idle'],
   ]
-  $('summary').innerHTML = bits.map(([c, n, w]) => `<span class="${c}${n ? '' : ' zero'}"><b>${n}</b> ${w}</span>`).join('')
   document.title = count('waiting') ? `(${count('waiting')}) Session Board` : 'Session Board'
   setFavicon(count('waiting') ? 'waiting' : 'ok')
+  // A background tab keeps its alert (title and favicon) and skips the rest.
+  if (document.hidden) return
+  const summary = bits.map(([c, n, w]) => `<span class="${c}${n ? '' : ' zero'}"><b>${n}</b> ${w}</span>`).join('')
+  if ($('summary').dataset.html !== summary) { $('summary').innerHTML = summary; $('summary').dataset.html = summary }
 
   // Tiles, keyed so animations survive polls
   const grid = $('grid')
@@ -544,6 +564,7 @@ function render() {
   if ($('rows').dataset.html !== rows) { $('rows').innerHTML = rows; $('rows').dataset.html = rows }
 
   if (openId) renderDrawer()
+  tick()
 }
 
 // Favicon: a 2x2 board of tiles, so the tab is easy to find. When a session needs
@@ -576,12 +597,14 @@ function markSort() {
 }
 
 // Live counters tick between polls.
-setInterval(() => {
+function tick() {
   const now = Date.now()
   for (const el of document.querySelectorAll('[data-since]')) {
-    el.textContent = el.dataset.prefix + dur(now - Number(el.dataset.since))
+    const text = el.dataset.prefix + dur(now - Number(el.dataset.since))
+    if (el.textContent !== text) el.textContent = text
   }
-}, 1000)
+}
+setInterval(() => { if (!document.hidden) tick() }, 1000)
 
 // ---- Drawer ---------------------------------------------------------------
 
@@ -630,7 +653,8 @@ function renderDrawer() {
   const s = sessions.find((x) => x.sessionId === openId)
   if (!s) return
   $('d-sub').textContent = [projectOf(s), s.branch].filter(Boolean).join(' · ')
-  $('d-title').innerHTML = titleOf(s)
+  const title = titleOf(s)
+  if ($('d-title').dataset.html !== title) { $('d-title').innerHTML = title; $('d-title').dataset.html = title }
   const html = drawerHtml(s)
   if (html !== openHtml) { $('d-body').innerHTML = html; openHtml = html }
 }
@@ -640,6 +664,7 @@ function openDrawer(id) {
   openHtml = ''
   document.body.classList.add('open')
   renderDrawer()
+  tick()
   $('d-body').parentElement.scrollTop = 0
 }
 function closeDrawer() {
@@ -666,7 +691,12 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDrawe
 
 // ---- Poll -----------------------------------------------------------------
 
+let pollTimer = null
+let polling = false
 async function poll() {
+  if (polling) return
+  polling = true
+  clearTimeout(pollTimer)
   const status = $('status')
   try {
     sessions = await loadSessions()
@@ -677,12 +707,17 @@ async function poll() {
     setFavicon('error')
     status.className = 'status error'
     status.innerHTML = `<span class="dot"></span>${esc(err.message)}`
+  } finally {
+    polling = false
+    pollTimer = setTimeout(poll, document.hidden ? HIDDEN_POLL_MS : POLL_MS)
   }
 }
 
+// Back in view: catch up at once instead of waiting out the slow interval.
+document.addEventListener('visibilitychange', () => { if (!document.hidden) poll() })
+
 markSort()
 loadPhases().then(poll)
-setInterval(poll, POLL_MS)
 </script>
 </body>
 </html>
