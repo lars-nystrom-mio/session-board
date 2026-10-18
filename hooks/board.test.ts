@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'claude-code/testing'
-import { addPrs, adoPrOfCommand, cacheTtlOf, childLabel, deriveState, freshBoard, memoryOf, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, summarize, toolLabel, trimAgents, workItemOf, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
+import { addPrs, adoOrgOf, adoPrLink, adoPrLookupOf, cacheTtlOf, childLabel, deriveState, freshBoard, memoryOf, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, summarize, toolLabel, trimAgents, workItemOf, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
 
 describe('summaries', () => {
   test('a tool call becomes one short line', async () => {
@@ -56,63 +56,59 @@ describe('pull requests', () => {
 
 describe('pull requests by number', () => {
   const remote = 'https://dev.azure.com/mioit/Mio.M3/_git/Mio.M3.Sales'
-  const pr36067 = { url: `${remote}/pullrequest/36067`, repo: 'Mio.M3.Sales', number: 36067, host: 'ado' }
+  const org = 'https://dev.azure.com/mioit'
+  const vessel = 'https://dev.azure.com/mioit/Mio.SupplyChain/_git/Mio.SupplyChainFulfilment.VesselTracking'
 
-  test('an az repos pr command names its PR by id', async () => {
-    const command = 'wc -c .claude/pr-body.md && az repos pr update --organization https://dev.azure.com/mioit --id 36067 --description "$(cat .claude/pr-body.md)" --query pullRequestId -o tsv; rm -r .claude/pr-body.md'
-    expect(adoPrOfCommand(command, '2696 .claude/pr-body.md\n36067', remote)).toEqual(pr36067)
-    expect(adoPrOfCommand('az repos pr create --title x --query pullRequestId -o tsv', '36067', 'https://user@dev.azure.com/mioit/Mio.M3/_git/Mio.M3.Sales')).toEqual(pr36067)
-    expect(adoPrOfCommand('az repos pr show --id 36067 -r Mio.M3.Sales', '{}', remote)).toEqual(pr36067)
+  test('an az repos pr command names its PR by id and org, never by repo', async () => {
+    const command = 'wc -c .claude/pr-body.md && az repos pr update --organization https://dev.azure.com/mioit --id 36067 --description "a --org other --id 5" --query pullRequestId -o tsv; rm -r .claude/pr-body.md'
+    expect(adoPrLookupOf(command, '2696 .claude/pr-body.md\n36067', remote)).toEqual({ id: 36067, org })
+    expect(adoPrLookupOf('az repos pr create --title x --query pullRequestId -o tsv', '36067', 'https://user@dev.azure.com/mioit/Mio.M3/_git/Mio.M3.Sales')).toEqual({ id: 36067, org })
+    // The issue's case: another repo's PR, run with the session repo's remote at hand.
+    expect(adoPrLookupOf('az repos pr update --org https://dev.azure.com/mioit --id 36319 --status completed', '', vessel)).toEqual({ id: 36319, org })
   })
 
-  test('nothing is built without an ADO remote, for another repo, or for a listing', async () => {
-    expect(adoPrOfCommand('az repos pr update --id 1', '', null)).toBe(null)
-    expect(adoPrOfCommand('az repos pr update --id 1', '', 'https://github.com/a/b.git')).toBe(null)
-    expect(adoPrOfCommand('az repos pr show --id 1 --repository Other', '', remote)).toBe(null)
-    expect(adoPrOfCommand('az repos pr list --status active', '36067', remote)).toBe(null)
-    expect(adoPrOfCommand('git push', '36067', remote)).toBe(null)
+  test('the organization is the same whichever way it is spelled', async () => {
+    const id = (flag: string, r: string | null) => adoPrLookupOf(`az repos pr show --id 7 ${flag}`, '', r)
+    const expected = { id: 7, org }
+    expect(id('--org mioit', vessel)).toEqual(expected)
+    expect(id('--org https://mioit.visualstudio.com/', vessel)).toEqual(expected)
+    expect(id('--organization=https://MioIT@dev.azure.com/mioit', null)).toEqual(expected)
+    expect(id('', 'https://mioit.visualstudio.com/Mio.M3/_git/Mio.M3.Sales')).toEqual(expected)
+    expect(id('--org other', vessel)).toEqual({ id: 7, org: 'https://dev.azure.com/other' })
+    expect(adoOrgOf('not an org')).toBe(null)
   })
 
-  test('a PR in another project, organization or directory is not guessed from the session repo', async () => {
-    const vessel = 'https://dev.azure.com/mioit/Mio.SupplyChain/_git/Mio.SupplyChainFulfilment.VesselTracking'
-    const cwd = 'C:\\Workspace.mioit\\VesselTracking'
-    const update = 'az repos pr update --org https://dev.azure.com/mioit --id 36319 --status completed'
-    expect(adoPrOfCommand(update, '', vessel, cwd)?.number).toBe(36319)
-    expect(adoPrOfCommand(`${update} --project OnPremOps`, '', vessel, cwd)).toBe(null)
-    expect(adoPrOfCommand(update.replace('mioit', 'other'), '', vessel, cwd)).toBe(null)
-    expect(adoPrOfCommand(`cd C:\\Workspace.mioit\\OnPremOps\\OnPremOps\\.git-worktrees\\x && ${update}`, '', vessel, cwd)).toBe(null)
-    expect(adoPrOfCommand(`cd /c/Workspace.mioit/OnPremOps && ${update}`, '', vessel, cwd)).toBe(null)
-    expect(adoPrOfCommand(`Set-Location 'C:\\Workspace.mioit\\OnPremOps'; ${update}`, '', vessel, cwd)).toBe(null)
-    expect(adoPrOfCommand(`cd "$WT" && ${update}`, '', vessel, cwd)).toBe(null)
-    // Inside the session's cwd, or below the starting directory, it is the session's repo.
-    expect(adoPrOfCommand(`cd C:\\Workspace.mioit\\VesselTracking\\sub && ${update}`, '', vessel, cwd)?.number).toBe(36319)
-    expect(adoPrOfCommand(`cd sub && ${update}`, '', vessel, cwd)?.number).toBe(36319)
-    expect(adoPrOfCommand(`cd C:\\elsewhere && ${update}`, '', vessel, null)).toBe(null)
+  test('nothing to look up without an org, an id, or for a listing', async () => {
+    expect(adoPrLookupOf('az repos pr update --id 1', '', null)).toBe(null)
+    expect(adoPrLookupOf('az repos pr update --id 1', '', 'https://github.com/a/b.git')).toBe(null)
+    expect(adoPrLookupOf('az repos pr update --id 1 --org "my org"', '', remote)).toBe(null)
+    expect(adoPrLookupOf('az repos pr list --status active', '36067', remote)).toBe(null)
+    expect(adoPrLookupOf('az repos pr show --repository x', '', remote)).toBe(null)
+    expect(adoPrLookupOf('git push', '36067', remote)).toBe(null)
   })
 
-  test('a link in the output wins over the guess, and a real link replaces a guess', async () => {
+  test('the link comes from the repo az reports', async () => {
+    expect(adoPrLink('https://dev.azure.com/mioit/OnPremOps/_git/OnPremOps\n', 36319)).toEqual({
+      url: 'https://dev.azure.com/mioit/OnPremOps/_git/OnPremOps/pullrequest/36319',
+      repo: 'OnPremOps',
+      number: 36319,
+      host: 'ado',
+    })
+    expect(adoPrLink('', 1)).toBe(null)
+    expect(adoPrLink('ERROR: not logged in', 1)).toBe(null)
+  })
+
+  test('a link in the output wins: no lookup', async () => {
     const real = 'https://dev.azure.com/mioit/OnPremOps/_git/OnPremOps'
-    const output = JSON.stringify({ pullRequestId: 36319, repository: { webUrl: real } })
-    const command = { command: 'az repos pr update --id 36319' }
-    const fromOutput = prsOfTool('Bash', command, output, remote, '/x')
-    expect(fromOutput.map((p) => p.url)).toEqual([`${real}/pullrequest/36319`])
-    const board = freshBoard('s1', '/x', 0)
-    const guessed = prsOfTool('Bash', command, '', remote, '/x')
-    expect(guessed[0]?.guessed).toBe(true)
-    addPrs(board, guessed, 1)
-    addPrs(board, [{ url: 'https://dev.azure.com/mioit/Other/_git/Other/pullrequest/5', repo: 'Other', number: 5, host: 'ado' }], 2)
-    expect(addPrs(board, prLinksOf(`${real}/pullrequest/36319`), 3).length).toBe(1)
-    expect(board.prs.map((p) => p.url)).toEqual([`${real}/pullrequest/36319`, 'https://dev.azure.com/mioit/Other/_git/Other/pullrequest/5'])
-    // A guess does not come back beside the real link.
-    expect(addPrs(board, guessed, 4)).toEqual([])
-    expect(board.prs.length).toBe(2)
-  })
-
-  test('JSON after other output still yields the link, once', async () => {
-    const output = `2745 pr-body.md\n${JSON.stringify({ pullRequestId: 36067, repository: { webUrl: remote } }, null, 2)}`
-    expect(prsOfTool('Bash', { command: 'az repos pr show --id 36067' }, output, remote)).toContainEqual(pr36067)
-    const board = freshBoard('s1', '/x', 0)
-    expect(addPrs(board, prsOfTool('Bash', { command: 'az repos pr show --id 36067' }, output, remote), 1).length).toBe(1)
+    const output = `2745 pr-body.md\n${JSON.stringify({ pullRequestId: 36319, repository: { webUrl: real } }, null, 2)}`
+    const command = { command: 'az repos pr show --id 36319' }
+    const found = prsOfTool('Bash', command, output, vessel)
+    expect(found.prs.map((p) => p.url)).toEqual([`${real}/pullrequest/36319`])
+    expect(found.lookup).toBe(null)
+    expect(addPrs(freshBoard('s1', '/x', 0), found.prs, 1).length).toBe(1)
+    // Output that names no PR leaves the lookup.
+    expect(prsOfTool('Bash', command, '', vessel)).toEqual({ prs: [], lookup: { id: 36319, org } })
+    expect(prsOfTool('Read', command, '', vessel).lookup).toBe(null)
   })
 })
 
