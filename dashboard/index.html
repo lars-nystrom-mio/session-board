@@ -179,6 +179,10 @@
   .meter i { display: block; height: 100%; background: var(--muted); border-radius: 2px; transition: width .6s ease; }
   .meter.hot i { background: var(--warn); }
   .cache.low { color: var(--warn); }
+  .mem { display: inline-flex; align-items: center; gap: 4px; }
+  .mem svg { width: 36px; height: 10px; overflow: visible; }
+  .mem polyline { fill: none; stroke: currentColor; stroke-width: 1.2; vector-effect: non-scaling-stroke; }
+  .mem.hot { color: var(--warn); }
 
   /* Ended & stale */
   details.past { margin-top: 32px; }
@@ -408,6 +412,31 @@ function cacheHtml(s) {
   return `<span title="${esc(title)}">${countdown(c.until, `cache ${c.isAssumed ? '≈' : ''}`, 'cache cold')}</span>`
 }
 
+// The session's claude.exe plus what it started, sampled once a minute.
+const MEM_HOT_MB = 1024  // the tile's memory turns orange from here
+const memTotal = (m) => m.mb + m.childMb
+const mb = (n) => (n >= 1024 ? `${(n / 1024).toFixed(1)} GB` : `${Math.round(n)} MB`)
+function sparkline(history) {
+  if (history.length < 2) return ''
+  const t0 = history[0][0], t1 = history.at(-1)[0]
+  const lo = Math.min(...history.map((h) => h[1])), hi = Math.max(...history.map((h) => h[1]))
+  const pts = history.map(([t, v]) => `${(((t - t0) / (t1 - t0 || 1)) * 36).toFixed(1)},${(10 - ((v - lo) / (hi - lo || 1)) * 10).toFixed(1)}`)
+  return `<svg viewBox="0 0 36 10" preserveAspectRatio="none"><polyline points="${pts.join(' ')}"/></svg>`
+}
+// Growth of claude.exe over the samples kept, or '' with fewer than two.
+function memTrend(m) {
+  if (m.history.length < 2) return ''
+  const [t0, v0] = m.history[0], [t1, v1] = m.history.at(-1)
+  return `${v1 >= v0 ? '+' : '−'}${mb(Math.abs(v1 - v0))} in ${dur(t1 - t0)}`
+}
+function memHtml(s) {
+  const m = s.memory
+  if (!m) return ''
+  const trend = memTrend(m)
+  const title = `claude.exe ${mb(m.mb)} (${mb(m.wsMb)} in RAM) + ${mb(m.childMb)} started by it${trend ? `\nclaude.exe ${trend}` : ''}`
+  return `<span class="mem ${memTotal(m) >= MEM_HOT_MB ? 'hot' : ''}" title="${esc(title)}">${sparkline(m.history)}${mb(memTotal(m))}</span>`
+}
+
 const isStale = (s) => s.state !== 'ended' && Date.now() - s.updatedAt > STALE_MS
 const projectOf = (s) => s.repo?.name || s.project || s.cwd
 const shortModel = (m) => (m || '').replace(/^claude-/, '').replace(/\[.*\]$/, '')
@@ -507,6 +536,7 @@ function tileHtml(s) {
     <div class="t-foot">
       ${pct != null ? `<span class="meter ${pct > 75 ? 'hot' : ''}" title="context ${Math.round(pct)}%"><i style="width:${Math.min(100, pct)}%"></i></span><span>${Math.round(pct)}%</span>` : ''}
       ${s.costUsd != null ? `<span>$${s.costUsd.toFixed(2)}</span>` : ''}
+      ${memHtml(s)}
       ${cacheHtml(s)}
       <span>${s.turns} turn${s.turns === 1 ? '' : 's'}</span>
       ${s.model ? `<span>${esc(shortModel(s.model))}</span>` : ''}
@@ -659,6 +689,17 @@ function drawerHtml(s) {
     <dt>session id</dt><dd>${esc(s.sessionId)}</dd>
   </dl>
   <button class="copy" data-copy="claude --resume ${esc(s.sessionId)}">copy  claude --resume ${esc(s.sessionId.slice(0, 8))}…</button>`)
+
+  if (s.memory) {
+    const m = s.memory
+    const trend = memTrend(m)
+    out.push(`<h4>Memory</h4><dl class="kv">
+      <dt>claude.exe</dt><dd>${mb(m.mb)} · ${mb(m.wsMb)} in RAM · PID ${m.pid}</dd>
+      ${trend ? `<dt>trend</dt><dd>${esc(trend)}</dd>` : ''}
+      ${m.children.map((c) => `<dt>${esc(c.label)}</dt><dd>${mb(c.mb)}${c.procs > 1 ? ` · ${c.procs} processes` : ''}</dd>`).join('')}
+      <dt>total</dt><dd>${mb(memTotal(m))} · sampled ${esc(clock(m.at))}</dd>
+    </dl>`)
+  }
 
   if (s.waiting) out.push(`<h4>Waiting for you</h4><div class="ask"><b>${esc(s.waiting.kind)}</b> · ${live(s.waiting.since)}<div class="d">${esc(s.waiting.detail)}</div></div>`)
   if (s.prompt) out.push(`<h4>Last prompt</h4><div class="quote">${esc(s.prompt)}</div>`)

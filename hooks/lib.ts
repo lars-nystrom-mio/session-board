@@ -77,9 +77,33 @@ export type Board = {
   // When the main thread last sent a request that used the prompt cache, and
   // the cache's TTL as the transcript's last cache write shows it (null: not known yet).
   cache?: { at: number; ttl: CacheTtl | null } | null
+  // The session's claude.exe and what it started, sampled once a minute (Windows only).
+  memory?: SessionMemory | null
 }
 
 export type CacheTtl = '5m' | '1h'
+
+// A process under the session, as the memory probe reports it. Sizes in MB:
+// `mb` is private memory, `wsMb` the working set (what is in physical RAM).
+export type ProcRec = { pid: number; ppid: number; name: string; cmd: string; mb: number; wsMb: number }
+export type ProbeResult = { root: number; procs: ProcRec[] }
+
+// One direct child of the session's claude.exe with everything under it, such as
+// an MCP server's npx wrapper and the node process it runs.
+export type ChildMem = { label: string; mb: number; procs: number }
+
+export type SessionMemory = {
+  pid: number
+  at: number
+  mb: number
+  wsMb: number
+  childMb: number
+  children: ChildMem[]
+  // [time, mb] of the claude.exe process, oldest first.
+  history: [number, number][]
+}
+
+export const MEMORY_HISTORY = 120 // two hours at one sample a minute
 
 export const MAX_EVENTS = 80
 export const MAX_AGENTS = 30
@@ -303,6 +327,70 @@ export function cacheTtlOf(transcript: string): CacheTtl | null {
   return ttl
 }
 
+const SHELLS = new Set(['cmd.exe', 'conhost.exe', 'powershell.exe', 'pwsh.exe', 'bash.exe', 'sh.exe'])
+const TOOL_SHELLS = new Set(['powershell.exe', 'pwsh.exe', 'bash.exe', 'sh.exe'])
+
+// A name for a child process tree, its top process first: the npx package it
+// runs (with the host for mcp-remote), "shell commands" for a Bash or
+// PowerShell tool call, else its first process that isn't a shell.
+export function childLabel(procs: ProcRec[]): string {
+  const cmds = procs.map((p) => p.cmd).join('\n')
+  const npx = cmds.match(/npx-cli\.js"?\s+(?:"?-[-\w]*"?\s+)*"?([^"\s]+)/)?.[1]
+  if (npx) {
+    const pkg = npx.replace(/(.)@[^/]*$/, '$1')
+    const host = pkg === 'mcp-remote' ? cmds.match(/https?:\/\/([^/\s"]+)/)?.[1] : undefined
+    return host ? `${pkg} ${host}` : pkg
+  }
+  if (procs[0] && TOOL_SHELLS.has(procs[0].name.toLowerCase())) return 'shell commands'
+  const named = procs.find((p) => !SHELLS.has(p.name.toLowerCase())) ?? procs[0]
+  return named ? named.name.replace(/\.exe$/i, '') : '?'
+}
+
+// The probe's JSON output; null when it found no claude.exe or printed something else.
+export function parseProbe(stdout: string): ProbeResult | null {
+  try {
+    const raw = JSON.parse(stdout.trim()) as { root?: number; procs?: ProcRec | ProcRec[] }
+    if (!raw.root || !raw.procs) return null
+    return { root: raw.root, procs: Array.isArray(raw.procs) ? raw.procs : [raw.procs] }
+  } catch {
+    return null
+  }
+}
+
+// Groups the processes under the session's claude.exe by its direct children
+// and appends the sample to the history, which starts over if the PID changed.
+export function memoryOf(probe: ProbeResult, at: number, previous: SessionMemory | null): SessionMemory | null {
+  const root = probe.procs.find((p) => p.pid === probe.root)
+  if (!root) return null
+  const byPid = new Map(probe.procs.map((p) => [p.pid, p]))
+  const groups = new Map<number, ProcRec[]>()
+  for (const p of probe.procs) {
+    if (p === root) continue
+    let top = p
+    for (let i = 0; i < 20 && top.ppid !== root.pid; i++) {
+      const parent = byPid.get(top.ppid)
+      if (!parent) break
+      top = parent
+    }
+    if (top.ppid !== root.pid) continue
+    groups.set(top.pid, [...(groups.get(top.pid) ?? []), p])
+  }
+  const children = [...groups.entries()]
+    .map(([top, procs]) => [...procs.filter((p) => p.pid === top), ...procs.filter((p) => p.pid !== top)])
+    .map((procs) => ({ label: childLabel(procs), mb: procs.reduce((sum, p) => sum + p.mb, 0), procs: procs.length }))
+    .sort((a, b) => b.mb - a.mb)
+  const history: [number, number][] = previous?.pid === root.pid ? [...previous.history, [at, root.mb]] : [[at, root.mb]]
+  return {
+    pid: root.pid,
+    at,
+    mb: root.mb,
+    wsMb: root.wsMb,
+    childMb: children.reduce((sum, c) => sum + c.mb, 0),
+    children,
+    history: history.slice(-MEMORY_HISTORY),
+  }
+}
+
 export function pushEvent(board: Board, event: BoardEvent): void {
   board.events.push(event)
   if (board.events.length > MAX_EVENTS) board.events.splice(0, board.events.length - MAX_EVENTS)
@@ -367,5 +455,6 @@ export function freshBoard(sessionId: string, cwd: string, now: number): Board {
     context: null,
     costUsd: null,
     cache: null,
+    memory: null,
   }
 }
