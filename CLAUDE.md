@@ -9,6 +9,8 @@ install it and how to serve the page. This file is for working on it.
   `%USERPROFILE%\.claude\board\sessions\<session-id>.json` on each change and a
   heartbeat every 5 s. On session start it copies `dashboard/index.html` to
   `.claude\board\index.html`.
+  Once a minute it runs `PROBE` in `powershell.exe` to sample memory: the
+  nearest `claude.exe` above the probe is the session's, found once per load.
 - `hooks/lib.ts`: the status file's shape (`Board`) and pure helpers. Keep
   anything without `$` here so the tests can call it.
 - `hooks/board.test.ts`: tests, run by `claude plugin test .`.

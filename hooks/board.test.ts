@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'claude-code/testing'
-import { addPrs, adoPrOfCommand, cacheTtlOf, deriveState, freshBoard, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, summarize, toolLabel, trimAgents, workItemOf, MAX_AGENTS, MAX_EVENTS } from './lib'
+import { addPrs, adoPrOfCommand, cacheTtlOf, childLabel, deriveState, freshBoard, memoryOf, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, summarize, toolLabel, trimAgents, workItemOf, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
 
 describe('summaries', () => {
   test('a tool call becomes one short line', async () => {
@@ -139,5 +139,52 @@ describe('prompt cache', () => {
     expect(cacheTtlOf([reply(744, 0), reply(0, 900)].join('\n'))).toBe('5m')
     expect(cacheTtlOf([reply(0, 900), reply(0, 0), reply(744, 0, true)].join('\n'))).toBe('5m')
     expect(cacheTtlOf(JSON.stringify({ type: 'user', message: { content: 'hi' } }))).toBe(null)
+  })
+})
+
+describe('memory', () => {
+  const proc = (pid: number, ppid: number, name: string, mb: number, cmd = name): ProcRec => ({ pid, ppid, name, cmd, mb, wsMb: mb })
+  // As the probe saw a real session: an Azure MCP server behind cmd and npx, a
+  // stdio MCP server, and a Bash tool call that was running.
+  const procs = [
+    proc(100, 1, 'claude.exe', 700),
+    proc(200, 100, 'cmd.exe', 8, 'C:\\WINDOWS\\system32\\cmd.exe /d /s /c "npx ^"-y^" ^"@azure/mcp@latest^" ^"server^" ^"start^""'),
+    proc(300, 100, 'SecondBrainMcp.exe', 18),
+    proc(400, 100, 'bash.exe', 2),
+    proc(201, 200, 'node.exe', 78, '"C:\\Program Files\\nodejs\\\\node.exe"  "C:\\Users\\x\\AppData\\Roaming\\npm\\node_modules\\npm\\bin\\npx-cli.js" "-y" "@azure/mcp@latest" "server" "start"'),
+    proc(202, 201, 'azmcp.exe', 28),
+    proc(301, 300, 'conhost.exe', 1),
+    proc(401, 400, 'node.exe', 18),
+  ]
+
+  test('child trees are named after what they run', async () => {
+    expect(childLabel(procs.filter((p) => [200, 201, 202].includes(p.pid)))).toBe('@azure/mcp')
+    expect(childLabel([proc(1, 0, 'node.exe', 1, '"node" "C:\\npm\\npx-cli.js" "-y" "mcp-remote" "https://kanban.example.com/api/mcp"')])).toBe('mcp-remote kanban.example.com')
+    expect(childLabel([proc(1, 0, 'conhost.exe', 1), proc(2, 1, 'SecondBrainMcp.exe', 1)])).toBe('SecondBrainMcp')
+    expect(childLabel([proc(1, 0, 'bash.exe', 1), proc(2, 1, 'node.exe', 1)])).toBe('shell commands')
+  })
+
+  test('a sample groups processes by the direct child of claude.exe', async () => {
+    const memory = memoryOf({ root: 100, procs }, 1000, null)
+    expect(memory?.mb).toBe(700)
+    expect(memory?.childMb).toBe(153)
+    expect(memory?.children.map((c) => `${c.label} ${c.mb} ${c.procs}`)).toEqual(['@azure/mcp 114 3', 'shell commands 20 2', 'SecondBrainMcp 19 2'])
+    expect(memory?.history).toEqual([[1000, 700]])
+    expect(memoryOf({ root: 999, procs }, 1000, null)).toBe(null)
+  })
+
+  test('the history grows per sample, is capped, and restarts with a new PID', async () => {
+    let memory = memoryOf({ root: 100, procs }, 0, null)
+    for (let i = 1; i <= MEMORY_HISTORY + 5; i++) memory = memoryOf({ root: 100, procs }, i, memory)
+    expect(memory?.history.length).toBe(MEMORY_HISTORY)
+    expect(memory?.history.at(-1)).toEqual([MEMORY_HISTORY + 5, 700])
+    const moved = memoryOf({ root: 500, procs: [proc(500, 1, 'claude.exe', 600)] }, 9, memory)
+    expect(moved?.history).toEqual([[9, 600]])
+  })
+
+  test('probe output with one process, nothing found, or noise', async () => {
+    expect(parseProbe('{"root":5,"procs":{"pid":5,"ppid":1,"name":"claude.exe","cmd":"","mb":1,"wsMb":1}}\r\n')?.procs.length).toBe(1)
+    expect(parseProbe('{}')).toBe(null)
+    expect(parseProbe('Get-CimInstance : access denied')).toBe(null)
   })
 })

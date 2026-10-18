@@ -13,6 +13,8 @@ import {
   clip,
   deriveState,
   freshBoard,
+  memoryOf,
+  parseProbe,
   prLinksOf,
   prsOfTool,
   projectDirName,
@@ -29,6 +31,32 @@ import {
 const HEARTBEAT_MS = 5_000
 const SLOW_EVERY = 6 // heartbeats between usage/branch refreshes (30 s)
 const WRITE_DELAY_MS = 250
+const MEMORY_EVERY = 12 // heartbeats between memory samples (60 s)
+const MEMORY_MAX_FAILURES = 3 // then the session stops sampling (no PowerShell, not Windows)
+
+// Lists the session's claude.exe and every process under it, with their memory,
+// as JSON. ROOT is the claude.exe PID, or 0 to find it: the nearest claude.exe
+// above this PowerShell. The probe leaves itself out. A child must be younger
+// than its parent, so a reused PID never adopts an unrelated process. One line
+// with single quotes only, since it goes through -Command.
+const PROBE = [
+  "$ErrorActionPreference = 'Stop'",
+  '$all = @(Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,Name,CommandLine,CreationDate)',
+  '$by = @{}',
+  '$kids = @{}',
+  'foreach ($p in $all) { $id = [int]$p.ProcessId; $by[$id] = $p; $pp = [int]$p.ParentProcessId; if (-not $kids.ContainsKey($pp)) { $kids[$pp] = New-Object System.Collections.ArrayList }; [void]$kids[$pp].Add($id) }',
+  '$root = ROOT',
+  "if ($root -eq 0 -and $by.ContainsKey($PID)) { $id = [int]$by[$PID].ParentProcessId; for ($i = 0; $i -lt 10 -and $by.ContainsKey($id); $i++) { if ($by[$id].Name -eq 'claude.exe') { $root = $id; break }; $id = [int]$by[$id].ParentProcessId } }",
+  "if ($root -eq 0 -or -not $by.ContainsKey($root)) { '{}'; exit 0 }",
+  '$ids = New-Object System.Collections.ArrayList',
+  '$queue = New-Object System.Collections.Queue',
+  '$queue.Enqueue($root)',
+  'while ($queue.Count) { $id = $queue.Dequeue(); if ($id -eq $PID -or $ids.Contains($id)) { continue }; [void]$ids.Add($id); if ($kids.ContainsKey($id)) { foreach ($k in $kids[$id]) { if ($by[$k].CreationDate -ge $by[$id].CreationDate) { $queue.Enqueue($k) } } } }',
+  '$mem = @{}',
+  'foreach ($g in @(Get-Process -Id $ids -ErrorAction SilentlyContinue)) { $mem[$g.Id] = $g }',
+  '$out = foreach ($id in $ids) { $p = $by[$id]; $g = $mem[$id]; if ($g) { $c = [string]$p.CommandLine; [pscustomobject]@{ pid = $id; ppid = [int]$p.ParentProcessId; name = [string]$p.Name; cmd = $c.Substring(0, [Math]::Min(300, $c.Length)); mb = [Math]::Round($g.PrivateMemorySize64 / 1MB); wsMb = [Math]::Round($g.WorkingSet64 / 1MB) } } }',
+  '[pscustomobject]@{ root = $root; procs = @($out) } | ConvertTo-Json -Compress -Depth 3',
+].join('; ')
 
 // Module state. A reload runs the module afresh, and init() picks the
 // session's file back up.
@@ -42,6 +70,8 @@ let heartbeat: Timer | null = null
 let ticks = 0
 let hasWarned = false
 let transcriptPath = ''
+let memoryPid = 0
+let memoryFailures = 0
 const tools = new Map<string, ToolRec>()
 
 const now = () => Date.now()
@@ -161,6 +191,27 @@ async function refreshSlow($: EngineInterface) {
   } catch {}
 }
 
+// The PID is found on the first sample of each load and passed in after that.
+async function sampleMemory($: EngineInterface) {
+  if (!board || memoryFailures >= MEMORY_MAX_FAILURES) return
+  try {
+    const script = PROBE.replace('$root = ROOT', `$root = ${memoryPid}`)
+    const run = await $.process.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', script], { timeoutMs: 20_000 })
+    const probe = run.exitCode === 0 ? parseProbe(run.stdout) : null
+    const memory = probe && board ? memoryOf(probe, now(), board.memory ?? null) : null
+    if (!memory || !board) {
+      memoryFailures++
+      memoryPid = 0
+      return
+    }
+    memoryFailures = 0
+    memoryPid = memory.pid
+    board.memory = memory
+  } catch {
+    memoryFailures++
+  }
+}
+
 // The engine's own agent list catches completions no event reported.
 async function syncAgents($: EngineInterface) {
   if (!board) return
@@ -194,6 +245,7 @@ async function syncAgents($: EngineInterface) {
 async function tick($: EngineInterface) {
   ticks++
   if (ticks % SLOW_EVERY === 0) await refreshSlow($)
+  if (ticks % MEMORY_EVERY === 0) await sampleMemory($)
   if (board?.agents.some((a) => a.status === 'running' || a.status === 'idle')) await syncAgents($)
   await flush($)
 }
@@ -226,7 +278,10 @@ async function init($: EngineInterface, cwd: string, interactive: boolean, reaso
   board.prs ??= []
   board.tabTitle ??= null
   board.cache ??= null
+  board.memory ??= null
   transcriptPath = ''
+  memoryPid = 0
+  memoryFailures = 0
   board.waiting = null
   if (board.state === 'running') board.state = 'idle'
   mainRunning = false
@@ -241,6 +296,7 @@ async function init($: EngineInterface, cwd: string, interactive: boolean, reaso
   await refreshSlow($)
   await readTranscript($)
   await flush($)
+  void sampleMemory($).then(() => schedule($))
 
   heartbeat?.cancel()
   heartbeat = $.clock.every(HEARTBEAT_MS, () => void tick($))

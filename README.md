@@ -70,6 +70,12 @@ running subagent, the tools in flight with live timers, the subagents with
 their status, and context use, cost and turn count. Click a tile for the
 prompt, the agent list, the full timeline and a `claude --resume` line to copy.
 
+On Windows a tile also shows the session's memory: its `claude.exe` plus
+everything it started (MCP servers, running shell commands), sampled once a
+minute through PowerShell, with a two-hour trend line. It turns orange at 1 GB.
+The drawer breaks it down per MCP server and shows how much `claude.exe` has
+grown since the first sample.
+
 Phases come from the newest running subagent's type, then from the running
 skill. Out of the box:
 
