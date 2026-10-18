@@ -10,6 +10,7 @@ import {
   QUIET_TOOLS,
   addPrs,
   adoPrLink,
+  adoPrShowArgv,
   cacheTtlOf,
   agentStatusOf,
   clip,
@@ -87,7 +88,8 @@ function notePrs(prs: Omit<PrRec, 'at'>[], agent?: string) {
   for (const pr of addPrs(board, prs, now())) event('tool', `PR ${pr.repo} ${pr.host === 'github' ? '#' : '!'}${pr.number}`, agent)
 }
 
-// PR ids already looked up this load, by org and id, whatever came of it.
+// PR ids being looked up or found this load, by org and id. A lookup that
+// fails or finds nothing is dropped, so the next command can try again.
 const lookedUp = new Set<string>()
 
 // A PR that a command names only by number: which repo it is in comes from
@@ -95,11 +97,16 @@ const lookedUp = new Set<string>()
 // another repo). Nothing is recorded when the lookup fails.
 async function resolvePr($: EngineInterface, lookup: PrLookup, agent?: string) {
   const key = `${lookup.org}#${lookup.id}`
-  if (lookedUp.has(key)) return
+  const argv = adoPrShowArgv(lookup)
+  if (!argv || lookedUp.has(key)) return
   lookedUp.add(key)
-  const script = `az repos pr show --id ${lookup.id} --org '${lookup.org}' --query repository.webUrl -o tsv`
-  const run = await $.process.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', script], { timeoutMs: 15_000 })
-  const pr = run.exitCode === 0 ? adoPrLink(run.stdout, lookup.id) : null
+  let pr: Omit<PrRec, 'at'> | null = null
+  try {
+    const run = await $.process.run(argv, { timeoutMs: 15_000 })
+    pr = run.exitCode === 0 ? adoPrLink(run.stdout, lookup.id) : null
+  } finally {
+    if (!pr) lookedUp.delete(key)
+  }
   if (!pr) return
   notePrs([pr], agent)
   schedule($)

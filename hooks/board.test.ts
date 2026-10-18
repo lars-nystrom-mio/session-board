@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'claude-code/testing'
-import { addPrs, adoOrgOf, adoPrLink, adoPrLookupOf, cacheTtlOf, childLabel, deriveState, freshBoard, memoryOf, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, summarize, toolLabel, trimAgents, workItemOf, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
+import { addPrs, adoOrgOf, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, childLabel, deriveState, freshBoard, memoryOf, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, summarize, toolLabel, trimAgents, workItemOf, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
 
 describe('summaries', () => {
   test('a tool call becomes one short line', async () => {
@@ -85,6 +85,17 @@ describe('pull requests by number', () => {
     expect(adoPrLookupOf('az repos pr list --status active', '36067', remote)).toBe(null)
     expect(adoPrLookupOf('az repos pr show --repository x', '', remote)).toBe(null)
     expect(adoPrLookupOf('git push', '36067', remote)).toBe(null)
+  })
+
+  test('a hostile --org yields no lookup and nothing reaches the script', async () => {
+    for (const org of [`https://dev.azure.com/x'$(calc)'`, `'x$(calc)'`, 'x`calc`', 'https://dev.azure.com/x%27', `https://x'.visualstudio.com`]) {
+      expect(adoPrLookupOf(`az repos pr show --id 1 --org ${org}`, '', vessel)).toBe(null)
+    }
+    expect(adoPrLookupOf('az repos pr show --id 1 --org x;calc', '', vessel)).toEqual({ id: 1, org: 'https://dev.azure.com/x' })
+    expect(adoRepoOf(`https://dev.azure.com/x'$(calc)'/p/_git/r`)).toBe(null)
+    expect(adoPrShowArgv({ id: 1, org: `https://dev.azure.com/x'$(calc)'` })).toBe(null)
+    expect(adoPrShowArgv({ id: 1.5, org })).toBe(null)
+    expect(adoPrShowArgv({ id: 36319, org })?.at(-1)).toBe(`az repos pr show --id 36319 --org '${org}' --query repository.webUrl -o tsv`)
   })
 
   test('the link comes from the repo az reports', async () => {

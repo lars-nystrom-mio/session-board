@@ -209,20 +209,42 @@ function adoJsonPrUrl(text: string): string | null {
   return ids.size === 1 && web ? `${web}/pullrequest/${id}` : null
 }
 
+// The organization at the start of an Azure DevOps URL, either host style. The
+// name is letters, digits, `_`, `-` and `.` only, so what comes out is safe to
+// put in a command line. The one place an org is read from text.
+const ADO_ORG_URL = /^https:\/\/(?:[^@/]+@)?(?:dev\.azure\.com\/([\w.-]+)|([\w-]+)\.visualstudio\.com)(?=[/?#]|$)/i
+
+function canonicalOrg(name: string): string {
+  return `https://dev.azure.com/${name.toLowerCase()}`
+}
+
 // An Azure DevOps repo's web URL from its remote or `repository.webUrl`, the
-// repo's name, and its organization as https://dev.azure.com/<org> whichever
-// host style the URL uses. The one place ADO repo URLs are parsed.
+// repo's name, and its organization as https://dev.azure.com/<org>.
 export function adoRepoOf(url: string): { web: string; repo: string; org: string } | null {
-  const m = url.trim().match(/^https:\/\/(?:[^@/]+@)?((?:dev\.azure\.com\/([^/]+)|([\w-]+)\.visualstudio\.com)\/[^/]+\/_git\/([^/?#\s]+))/i)
-  const org = m?.[2] ?? m?.[3]
-  return m?.[1] && m[4] && org ? { web: `https://${m[1]}`, repo: decode(m[4]), org: `https://dev.azure.com/${org.toLowerCase()}` } : null
+  const text = url.trim()
+  const o = text.match(ADO_ORG_URL)
+  const name = o?.[1] ?? o?.[2]
+  const r = o && name ? text.slice(o[0].length).match(/^\/([^/]+)\/_git\/([^/?#\s]+)/) : null
+  if (!o || !name || !r?.[1] || !r[2]) return null
+  return { web: `${o[0].replace(/^https:\/\/[^@/]+@/i, 'https://')}/${r[1]}/_git/${r[2]}`, repo: decode(r[2]), org: canonicalOrg(name) }
 }
 
 // What `--org` takes (a URL of either host style, or a bare name) as
-// https://dev.azure.com/<org>.
+// https://dev.azure.com/<org>; null for anything else.
 export function adoOrgOf(text: string): string | null {
-  const name = text.match(/^https:\/\/(?:[^@/]+@)?dev\.azure\.com\/([^/\s]+)/i)?.[1] ?? text.match(/^https:\/\/([\w-]+)\.visualstudio\.com/i)?.[1] ?? text.match(/^([\w.-]+)$/)?.[1]
-  return name ? `https://dev.azure.com/${name.toLowerCase()}` : null
+  const o = text.match(ADO_ORG_URL)
+  const name = o?.[1] ?? o?.[2] ?? text.match(/^([\w.-]+)$/)?.[1]
+  return name ? canonicalOrg(name) : null
+}
+
+// The command that asks Azure DevOps which repo a PR is in; stdout is the
+// repo's web URL. The id is a number and the org is read back through
+// `adoOrgOf`, so nothing from the original command reaches the script.
+export function adoPrShowArgv(lookup: PrLookup): string[] | null {
+  const org = /^https:\/\/dev\.azure\.com\/[\w.-]+$/.test(lookup.org) ? adoOrgOf(lookup.org) : null
+  if (!org || !Number.isSafeInteger(lookup.id) || lookup.id <= 0) return null
+  const script = `az repos pr show --id ${lookup.id} --org '${org}' --query repository.webUrl -o tsv`
+  return ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', script]
 }
 
 // A PR that an `az repos pr` command names only by number. Its id is unique
