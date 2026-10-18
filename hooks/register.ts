@@ -1,4 +1,4 @@
-import type { EngineInterface, Register, Timer } from 'claude-code'
+import type { EngineInterface, ModelUsage, Register, Timer } from 'claude-code'
 import {
   type AgentRec,
   type Board,
@@ -8,6 +8,7 @@ import {
   type Waiting,
   QUIET_TOOLS,
   addPrs,
+  cacheTtlOf,
   agentStatusOf,
   clip,
   deriveState,
@@ -116,15 +117,28 @@ async function findTranscript($: EngineInterface): Promise<string> {
   return ''
 }
 
-// The title is in the transcript from the first turn on, and changes with /rename.
-async function readTitle($: EngineInterface) {
+// The title is in the transcript from the first turn on, and changes with
+// /rename. Each response's usage there also says which TTL the cache got.
+async function readTranscript($: EngineInterface) {
   if (!board) return
   try {
     transcriptPath ||= await findTranscript($)
     if (!transcriptPath) return
-    const title = sessionTitleOf(await $.fs.read(transcriptPath))
-    if (title && board) board.tabTitle = title
+    const transcript = await $.fs.read(transcriptPath)
+    if (!board) return
+    const title = sessionTitleOf(transcript)
+    if (title) board.tabTitle = title
+    const ttl = cacheTtlOf(transcript)
+    if (ttl && board.cache) board.cache.ttl = ttl
   } catch {}
+}
+
+// A main-thread request the prompt cache served or was written by. The cache
+// entry's lifetime restarts when the request is sent, so `sent` is the start.
+function cacheUsed($: EngineInterface, sent: number, usage: ModelUsage) {
+  if (!board || usage.cache_read_input_tokens + usage.cache_creation_input_tokens === 0) return
+  board.cache = { at: sent, ttl: board.cache?.ttl ?? null }
+  schedule($)
 }
 
 async function refreshSlow($: EngineInterface) {
@@ -211,6 +225,7 @@ async function init($: EngineInterface, cwd: string, interactive: boolean, reaso
   board.tools = []
   board.prs ??= []
   board.tabTitle ??= null
+  board.cache ??= null
   transcriptPath = ''
   board.waiting = null
   if (board.state === 'running') board.state = 'idle'
@@ -224,7 +239,7 @@ async function init($: EngineInterface, cwd: string, interactive: boolean, reaso
 
   await copyDashboard($, dir)
   await refreshSlow($)
-  await readTitle($)
+  await readTranscript($)
   await flush($)
 
   heartbeat?.cancel()
@@ -325,7 +340,7 @@ async function turnCompleted($: EngineInterface, e: TurnEnd) {
     board.waiting = null
     event('turn', e.isAborted ? 'interrupted' : `turn done in ${secs}s`)
     await refreshSlow($)
-    await readTitle($)
+    await readTranscript($)
   }
   schedule($)
 }
@@ -411,6 +426,18 @@ export const register: Register = (on) => {
   on('turn.complete', async ($, e, next) => {
     await turnCompleted($, e)
     return next(e)
+  })
+
+  // A model request; it streams, so the hook forwards the chunks as they come.
+  on('turn.step', async function* ($, e, next) {
+    const sent = now()
+    const result = yield* next(e)
+    try {
+      if (!e.agentId && result.usage) cacheUsed($, sent, result.usage)
+    } catch {}
+    return result
+  }).catch(async function* ($, e, next) {
+    return yield* next(e) // the board only observes: on failure the request goes on
   })
 
   on('agent.spawn', async ($, e, next) => {

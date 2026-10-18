@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'claude-code/testing'
-import { addPrs, adoPrOfCommand, deriveState, freshBoard, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, summarize, toolLabel, trimAgents, workItemOf, MAX_AGENTS, MAX_EVENTS } from './lib'
+import { addPrs, adoPrOfCommand, cacheTtlOf, deriveState, freshBoard, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, summarize, toolLabel, trimAgents, workItemOf, MAX_AGENTS, MAX_EVENTS } from './lib'
 
 describe('summaries', () => {
   test('a tool call becomes one short line', async () => {
@@ -129,4 +129,15 @@ test('the board never gets in the way of a tool call', async ($, on) => {
   const result = await $.tool.call({ tool: 'Bash', command: 'echo hi' })
   expect(result.deny).toBe(undefined)
   expect(result.result).toBe('hi')
+})
+
+describe('prompt cache', () => {
+  test('the TTL of the main thread newest cache write', async () => {
+    const reply = (h1: number, m5: number, isSidechain = false) =>
+      JSON.stringify({ type: 'assistant', isSidechain, message: { usage: { cache_creation: { ephemeral_1h_input_tokens: h1, ephemeral_5m_input_tokens: m5 } } } })
+    expect(cacheTtlOf([reply(0, 900), reply(744, 0)].join('\n'))).toBe('1h')
+    expect(cacheTtlOf([reply(744, 0), reply(0, 900)].join('\n'))).toBe('5m')
+    expect(cacheTtlOf([reply(0, 900), reply(0, 0), reply(744, 0, true)].join('\n'))).toBe('5m')
+    expect(cacheTtlOf(JSON.stringify({ type: 'user', message: { content: 'hi' } }))).toBe(null)
+  })
 })
