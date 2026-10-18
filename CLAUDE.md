@@ -11,6 +11,8 @@ install it and how to serve the page. This file is for working on it.
   `.claude\board\index.html`.
   Once a minute it runs `PROBE` in `powershell.exe` to sample memory: the
   nearest `claude.exe` above the probe is the session's, found once per load.
+  It runs `powershell.exe` a second time for `az repos pr show`, to look up
+  which repo a PR named only by number is in.
 - `hooks/lib.ts`: the status file's shape (`Board`) and pure helpers. Keep
   anything without `$` here so the tests can call it.
 - `hooks/board.test.ts`: tests, run by `claude plugin test .`.

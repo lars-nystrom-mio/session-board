@@ -3,11 +3,14 @@ import {
   type AgentRec,
   type Board,
   type BoardEvent,
+  type PrLookup,
   type PrRec,
   type ToolRec,
   type Waiting,
   QUIET_TOOLS,
   addPrs,
+  adoPrLink,
+  adoPrShowArgv,
   cacheTtlOf,
   agentStatusOf,
   clip,
@@ -83,6 +86,30 @@ function event(kind: BoardEvent['kind'], text: string, agent?: string) {
 function notePrs(prs: Omit<PrRec, 'at'>[], agent?: string) {
   if (!board) return
   for (const pr of addPrs(board, prs, now())) event('tool', `PR ${pr.repo} ${pr.host === 'github' ? '#' : '!'}${pr.number}`, agent)
+}
+
+// PR ids being looked up or found this load, by org and id. A lookup that
+// fails or finds nothing is dropped, so the next command can try again.
+const lookedUp = new Set<string>()
+
+// A PR that a command names only by number: which repo it is in comes from
+// Azure DevOps, not from the session's remote (the command may have run in
+// another repo). Nothing is recorded when the lookup fails.
+async function resolvePr($: EngineInterface, lookup: PrLookup, agent?: string) {
+  const key = `${lookup.org}#${lookup.id}`
+  const argv = adoPrShowArgv(lookup)
+  if (!argv || lookedUp.has(key)) return
+  lookedUp.add(key)
+  let pr: Omit<PrRec, 'at'> | null = null
+  try {
+    const run = await $.process.run(argv, { timeoutMs: 15_000 })
+    pr = run.exitCode === 0 ? adoPrLink(run.stdout, lookup.id) : null
+  } finally {
+    if (!pr) lookedUp.delete(key)
+  }
+  if (!pr) return
+  notePrs([pr], agent)
+  schedule($)
 }
 
 function agentName(agentId?: string): string | undefined {
@@ -520,7 +547,12 @@ export const register: Register = (on) => {
       const result = await next(e)
       outcome = result.deny !== undefined ? 'denied' : result.isError ? 'failed' : 'ok'
       const input = e as unknown as Record<string, unknown>
-      if (outcome === 'ok' && scansForPrs(e.tool, input)) prs = prsOfTool(e.tool, input, result.text ?? '', board?.repo?.remote ?? null)
+      if (outcome === 'ok' && scansForPrs(e.tool, input)) {
+        const found = prsOfTool(e.tool, input, result.text ?? '', board?.repo?.remote ?? null)
+        prs = found.prs
+        // Fire and forget: the lookup never holds up the tool call.
+        if (found.lookup) void resolvePr($, found.lookup, agentName(e.agentId)).catch(() => {})
+      }
       return result
     } finally {
       toolEnded($, rec, e.tool, outcome, prs)

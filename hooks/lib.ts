@@ -209,24 +209,67 @@ function adoJsonPrUrl(text: string): string | null {
   return ids.size === 1 && web ? `${web}/pullrequest/${id}` : null
 }
 
-// The web URL of an Azure DevOps repo from its remote, and the repo's name.
-function adoRepoOf(remote: string): { web: string; repo: string } | null {
-  const m = remote.match(/^https:\/\/(?:[^@/]+@)?((?:dev\.azure\.com\/[^/]+|[\w-]+\.visualstudio\.com)\/[^/]+\/_git\/([^/?#\s]+))/i)
-  return m?.[1] && m[2] ? { web: `https://${m[1]}`, repo: decode(m[2]) } : null
+// The organization at the start of an Azure DevOps URL, either host style. The
+// name is letters, digits, `_`, `-` and `.` only, so what comes out is safe to
+// put in a command line. The one place an org is read from text.
+const ADO_ORG_URL = /^https:\/\/(?:[^@/]+@)?(?:dev\.azure\.com\/([\w.-]+)|([\w-]+)\.visualstudio\.com)(?=[/?#]|$)/i
+
+function canonicalOrg(name: string): string {
+  return `https://dev.azure.com/${name.toLowerCase()}`
 }
 
+// An Azure DevOps repo's web URL from its remote or `repository.webUrl`, the
+// repo's name, and its organization as https://dev.azure.com/<org>.
+export function adoRepoOf(url: string): { web: string; repo: string; org: string } | null {
+  const text = url.trim()
+  const o = text.match(ADO_ORG_URL)
+  const name = o?.[1] ?? o?.[2]
+  const r = o && name ? text.slice(o[0].length).match(/^\/([^/]+)\/_git\/([^/?#\s]+)/) : null
+  if (!o || !name || !r?.[1] || !r[2]) return null
+  return { web: `${o[0].replace(/^https:\/\/[^@/]+@/i, 'https://')}/${r[1]}/_git/${r[2]}`, repo: decode(r[2]), org: canonicalOrg(name) }
+}
+
+// What `--org` takes (a URL of either host style, or a bare name) as
+// https://dev.azure.com/<org>; null for anything else.
+export function adoOrgOf(text: string): string | null {
+  const o = text.match(ADO_ORG_URL)
+  const name = o?.[1] ?? o?.[2] ?? text.match(/^([\w.-]+)$/)?.[1]
+  return name ? canonicalOrg(name) : null
+}
+
+// The command that asks Azure DevOps which repo a PR is in; stdout is the
+// repo's web URL. The id is a number and the org is read back through
+// `adoOrgOf`, so nothing from the original command reaches the script.
+export function adoPrShowArgv(lookup: PrLookup): string[] | null {
+  const org = /^https:\/\/dev\.azure\.com\/[\w.-]+$/.test(lookup.org) ? adoOrgOf(lookup.org) : null
+  if (!org || !Number.isSafeInteger(lookup.id) || lookup.id <= 0) return null
+  const script = `az repos pr show --id ${lookup.id} --org '${org}' --query repository.webUrl -o tsv`
+  return ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', script]
+}
+
+// A PR that an `az repos pr` command names only by number. Its id is unique
+// within the organization, but which repo it is in isn't in the command.
+export type PrLookup = { id: number; org: string }
+
 // `az repos pr update --id 36067 --query pullRequestId -o tsv` names the PR
-// only by number, so its link is built from the session repo's remote. Skipped
-// when the command names another repository.
-export function adoPrOfCommand(command: string, output: string, remote: string | null): Omit<PrRec, 'at'> | null {
+// only by number. The organization is the one the command names, else the
+// session repo's. Nothing is guessed about the repo: the caller asks Azure
+// DevOps (`adoPrLink` builds the link).
+export function adoPrLookupOf(command: string, output: string, remote: string | null): PrLookup | null {
   const call = command.match(/\baz\s+repos\s+pr\s+(\w[\w-]*)[^;&|\n]*/i)
-  const ado = remote ? adoRepoOf(remote) : null
-  if (!call || !ado || call[1]?.toLowerCase() === 'list') return null
-  const args = call[0]
-  const named = args.match(/\s(?:--repository|-r)[=\s]+["']?([^"'\s]+)/)?.[1]
-  if (named && decode(named).toLowerCase() !== ado.repo.toLowerCase()) return null
+  if (!call || call[1]?.toLowerCase() === 'list') return null
+  // Quoted text with spaces is a description or a title, not an option.
+  const args = call[0].replace(/"[^"]*\s[^"]*"|'[^']*\s[^']*'/g, '""')
+  const named = args.match(/\s(?:--organization|--org)[=\s]+(\S+)/)?.[1]?.replace(/^["']|["']$/g, '')
+  const org = named !== undefined ? adoOrgOf(named) : remote ? (adoRepoOf(remote)?.org ?? null) : null
   const id = args.match(/\s--id[=\s]+["']?(\d+)/)?.[1] ?? (call[1]?.toLowerCase() === 'create' ? output.trim().match(/(?:^|\n)(\d+)$/)?.[1] : undefined)
-  return id ? { url: `${ado.web}/pullrequest/${id}`, repo: ado.repo, number: Number(id), host: 'ado' } : null
+  return org && id ? { id: Number(id), org } : null
+}
+
+// The PR's link, from its repo's `repository.webUrl` and its number.
+export function adoPrLink(webUrl: string, id: number): Omit<PrRec, 'at'> | null {
+  const ado = adoRepoOf(webUrl)
+  return ado ? { url: `${ado.web}/pullrequest/${id}`, repo: ado.repo, number: id, host: 'ado' } : null
 }
 
 // The PR links in a tool's output, a prompt or an agent's report.
@@ -257,15 +300,17 @@ export function scansForPrs(tool: string, input: Record<string, unknown>): boole
   return tool === 'Agent' || tool.startsWith('mcp__')
 }
 
-// The PRs a finished tool call names: links in its output, or for an
-// `az repos pr` command, the PR it acts on.
-export function prsOfTool(tool: string, input: Record<string, unknown>, output: string, remote: string | null): Omit<PrRec, 'at'>[] {
-  const found = prLinksOf(output)
+// The PRs a finished tool call names: links in its output. For an
+// `az repos pr` command that names its PR only by number and whose output
+// doesn't, a lookup to resolve (the caller asks Azure DevOps).
+export function prsOfTool(tool: string, input: Record<string, unknown>, output: string, remote: string | null): { prs: Omit<PrRec, 'at'>[]; lookup: PrLookup | null } {
+  const prs = prLinksOf(output)
+  let lookup: PrLookup | null = null
   if (tool === 'Bash' || tool === 'PowerShell') {
-    const byNumber = adoPrOfCommand(typeof input.command === 'string' ? input.command : '', output, remote)
-    if (byNumber) found.push(byNumber)
+    lookup = adoPrLookupOf(typeof input.command === 'string' ? input.command : '', output, remote)
+    if (lookup && prs.some((p) => p.host === 'ado' && p.number === lookup?.id)) lookup = null
   }
-  return found
+  return { prs, lookup }
 }
 
 // Adds PRs not seen yet and returns those.
