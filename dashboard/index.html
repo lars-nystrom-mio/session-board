@@ -178,6 +178,7 @@
   .meter { flex: 1; max-width: 120px; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
   .meter i { display: block; height: 100%; background: var(--muted); border-radius: 2px; transition: width .6s ease; }
   .meter.hot i { background: var(--warn); }
+  .cache.low { color: var(--warn); }
 
   /* Ended & stale */
   details.past { margin-top: 32px; }
@@ -387,6 +388,26 @@ function dur(ms) {
 const live = (since, prefix = '') => `<span data-since="${since}" data-prefix="${esc(prefix)}"></span>`
 const clock = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 
+// Counts down to `until`; tick() fills it in and swaps to `expired` once past.
+const countdown = (until, prefix, expired) =>
+  `<span class="cache" data-until="${until}" data-prefix="${esc(prefix)}" data-expired="${esc(expired)}"></span>`
+
+// The main thread's prompt cache, while nothing keeps it warm. Sessions that
+// haven't reported a TTL yet are assumed to have the default hour.
+const CACHE_TTL_MS = { '5m': 5 * 60_000, '1h': 60 * 60_000 }
+const CACHE_LOW_MS = 2 * 60_000  // the countdown turns orange from here
+function cacheExpiry(s) {
+  if (!s.cache) return null
+  const ttl = s.cache.ttl || '1h'
+  return { until: s.cache.at + CACHE_TTL_MS[ttl], ttl, isAssumed: !s.cache.ttl }
+}
+function cacheHtml(s) {
+  const c = cacheExpiry(s)
+  if (!c || s.state === 'running') return ''
+  const title = `prompt cache ${c.isAssumed ? 'assumed to expire' : 'expires'} ${clock(c.until)} (${c.ttl} TTL${c.isAssumed ? ', assumed' : ''})`
+  return `<span title="${esc(title)}">${countdown(c.until, `cache ${c.isAssumed ? '≈' : ''}`, 'cache cold')}</span>`
+}
+
 const isStale = (s) => s.state !== 'ended' && Date.now() - s.updatedAt > STALE_MS
 const projectOf = (s) => s.repo?.name || s.project || s.cwd
 const shortModel = (m) => (m || '').replace(/^claude-/, '').replace(/\[.*\]$/, '')
@@ -486,6 +507,7 @@ function tileHtml(s) {
     <div class="t-foot">
       ${pct != null ? `<span class="meter ${pct > 75 ? 'hot' : ''}" title="context ${Math.round(pct)}%"><i style="width:${Math.min(100, pct)}%"></i></span><span>${Math.round(pct)}%</span>` : ''}
       ${s.costUsd != null ? `<span>$${s.costUsd.toFixed(2)}</span>` : ''}
+      ${cacheHtml(s)}
       <span>${s.turns} turn${s.turns === 1 ? '' : 's'}</span>
       ${s.model ? `<span>${esc(shortModel(s.model))}</span>` : ''}
       ${s.prs?.length ? `<span class="prs">${[...s.prs].reverse().map((p) => `
@@ -603,10 +625,24 @@ function tick() {
     const text = el.dataset.prefix + dur(now - Number(el.dataset.since))
     if (el.textContent !== text) el.textContent = text
   }
+  for (const el of document.querySelectorAll('[data-until]')) {
+    const left = Number(el.dataset.until) - now
+    const text = left > 0 ? el.dataset.prefix + dur(left) : el.dataset.expired
+    if (el.textContent !== text) el.textContent = text
+    el.classList.toggle('low', left > 0 && left <= CACHE_LOW_MS)
+  }
 }
 setInterval(() => { if (!document.hidden) tick() }, 1000)
 
 // ---- Drawer ---------------------------------------------------------------
+
+function cacheDrawerText(s) {
+  const c = cacheExpiry(s)
+  const ttl = `${c.ttl} TTL${c.isAssumed ? ', assumed' : ''}`
+  if (s.state === 'running') return `in use (${ttl})`
+  const at = Date.now() < c.until ? 'warm until' : 'expired'
+  return `${at} ${esc(clock(c.until))} · last used ${esc(clock(s.cache.at))} (${ttl})`
+}
 
 function drawerHtml(s) {
   const out = []
@@ -619,6 +655,7 @@ function drawerHtml(s) {
     ${s.model ? `<dt>model</dt><dd>${esc(s.model)}</dd>` : ''}
     ${s.context?.percent != null ? `<dt>context</dt><dd>${Math.round(s.context.percent)}% of ${Math.round(s.context.window / 1000)}k</dd>` : ''}
     ${s.costUsd != null ? `<dt>cost</dt><dd>$${s.costUsd.toFixed(2)}</dd>` : ''}
+    ${s.cache ? `<dt>prompt cache</dt><dd>${cacheDrawerText(s)}</dd>` : ''}
     <dt>session id</dt><dd>${esc(s.sessionId)}</dd>
   </dl>
   <button class="copy" data-copy="claude --resume ${esc(s.sessionId)}">copy  claude --resume ${esc(s.sessionId.slice(0, 8))}…</button>`)

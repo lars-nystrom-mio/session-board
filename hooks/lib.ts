@@ -74,7 +74,12 @@ export type Board = {
   events: BoardEvent[]
   context: { percent: number | null; tokens: number | null; window: number } | null
   costUsd: number | null
+  // When the main thread last sent a request that used the prompt cache, and
+  // the cache's TTL as the transcript's last cache write shows it (null: not known yet).
+  cache?: { at: number; ttl: CacheTtl | null } | null
 }
+
+export type CacheTtl = '5m' | '1h'
 
 export const MAX_EVENTS = 80
 export const MAX_AGENTS = 30
@@ -276,6 +281,28 @@ export function sessionTitleOf(transcript: string): string | null {
   return title ? clip(title, 120) : null
 }
 
+type UsageRec = {
+  isSidechain?: boolean
+  message?: { usage?: { cache_creation?: { ephemeral_1h_input_tokens?: number; ephemeral_5m_input_tokens?: number } } }
+}
+
+// The TTL of the main thread's newest cache write, from the usage the API
+// reported on each response. Null when the transcript has none yet.
+export function cacheTtlOf(transcript: string): CacheTtl | null {
+  let ttl: CacheTtl | null = null
+  for (const line of transcript.split('\n')) {
+    if (!line.includes('"ephemeral_')) continue
+    try {
+      const rec = JSON.parse(line) as UsageRec
+      const written = rec.message?.usage?.cache_creation
+      if (rec.isSidechain || !written) continue
+      if ((written.ephemeral_1h_input_tokens ?? 0) > 0) ttl = '1h'
+      else if ((written.ephemeral_5m_input_tokens ?? 0) > 0) ttl = '5m'
+    } catch {}
+  }
+  return ttl
+}
+
 export function pushEvent(board: Board, event: BoardEvent): void {
   board.events.push(event)
   if (board.events.length > MAX_EVENTS) board.events.splice(0, board.events.length - MAX_EVENTS)
@@ -339,5 +366,6 @@ export function freshBoard(sessionId: string, cwd: string, now: number): Board {
     events: [],
     context: null,
     costUsd: null,
+    cache: null,
   }
 }

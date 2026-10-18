@@ -49,6 +49,8 @@ SESSION_BOARD_DIR=<scratch dir> claude -p --plugin-dir . --model haiku "<prompt 
   events) end with `.catch(($, e, next) => next(e))`, so a bug in the board can
   never block a tool call.
 - In tests, a hook that answers `tool.call` returns `{ result }`.
+- `turn.step` streams: its hook and its `.catch` handler are both
+  `async function*`, and forward the stream with `yield* next(e)`.
 
 ## What the events look like in practice
 
