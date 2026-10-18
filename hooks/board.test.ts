@@ -73,6 +73,41 @@ describe('pull requests by number', () => {
     expect(adoPrOfCommand('git push', '36067', remote)).toBe(null)
   })
 
+  test('a PR in another project, organization or directory is not guessed from the session repo', async () => {
+    const vessel = 'https://dev.azure.com/mioit/Mio.SupplyChain/_git/Mio.SupplyChainFulfilment.VesselTracking'
+    const cwd = 'C:\\Workspace.mioit\\VesselTracking'
+    const update = 'az repos pr update --org https://dev.azure.com/mioit --id 36319 --status completed'
+    expect(adoPrOfCommand(update, '', vessel, cwd)?.number).toBe(36319)
+    expect(adoPrOfCommand(`${update} --project OnPremOps`, '', vessel, cwd)).toBe(null)
+    expect(adoPrOfCommand(update.replace('mioit', 'other'), '', vessel, cwd)).toBe(null)
+    expect(adoPrOfCommand(`cd C:\\Workspace.mioit\\OnPremOps\\OnPremOps\\.git-worktrees\\x && ${update}`, '', vessel, cwd)).toBe(null)
+    expect(adoPrOfCommand(`cd /c/Workspace.mioit/OnPremOps && ${update}`, '', vessel, cwd)).toBe(null)
+    expect(adoPrOfCommand(`Set-Location 'C:\\Workspace.mioit\\OnPremOps'; ${update}`, '', vessel, cwd)).toBe(null)
+    expect(adoPrOfCommand(`cd "$WT" && ${update}`, '', vessel, cwd)).toBe(null)
+    // Inside the session's cwd, or below the starting directory, it is the session's repo.
+    expect(adoPrOfCommand(`cd C:\\Workspace.mioit\\VesselTracking\\sub && ${update}`, '', vessel, cwd)?.number).toBe(36319)
+    expect(adoPrOfCommand(`cd sub && ${update}`, '', vessel, cwd)?.number).toBe(36319)
+    expect(adoPrOfCommand(`cd C:\\elsewhere && ${update}`, '', vessel, null)).toBe(null)
+  })
+
+  test('a link in the output wins over the guess, and a real link replaces a guess', async () => {
+    const real = 'https://dev.azure.com/mioit/OnPremOps/_git/OnPremOps'
+    const output = JSON.stringify({ pullRequestId: 36319, repository: { webUrl: real } })
+    const command = { command: 'az repos pr update --id 36319' }
+    const fromOutput = prsOfTool('Bash', command, output, remote, '/x')
+    expect(fromOutput.map((p) => p.url)).toEqual([`${real}/pullrequest/36319`])
+    const board = freshBoard('s1', '/x', 0)
+    const guessed = prsOfTool('Bash', command, '', remote, '/x')
+    expect(guessed[0]?.guessed).toBe(true)
+    addPrs(board, guessed, 1)
+    addPrs(board, [{ url: 'https://dev.azure.com/mioit/Other/_git/Other/pullrequest/5', repo: 'Other', number: 5, host: 'ado' }], 2)
+    expect(addPrs(board, prLinksOf(`${real}/pullrequest/36319`), 3).length).toBe(1)
+    expect(board.prs.map((p) => p.url)).toEqual([`${real}/pullrequest/36319`, 'https://dev.azure.com/mioit/Other/_git/Other/pullrequest/5'])
+    // A guess does not come back beside the real link.
+    expect(addPrs(board, guessed, 4)).toEqual([])
+    expect(board.prs.length).toBe(2)
+  })
+
   test('JSON after other output still yields the link, once', async () => {
     const output = `2745 pr-body.md\n${JSON.stringify({ pullRequestId: 36067, repository: { webUrl: remote } }, null, 2)}`
     expect(prsOfTool('Bash', { command: 'az repos pr show --id 36067' }, output, remote)).toContainEqual(pr36067)

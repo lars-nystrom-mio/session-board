@@ -34,6 +34,9 @@ export type PrRec = {
   repo: string
   number: number
   host: 'github' | 'ado'
+  // Built from the session repo's remote for a command that named the PR only
+  // by number; a link read from output or a report replaces it.
+  guessed?: true
   at: number
 }
 
@@ -215,16 +218,47 @@ function adoRepoOf(remote: string): { web: string; repo: string } | null {
   return m?.[1] && m[2] ? { web: `https://${m[1]}`, repo: decode(m[2]) } : null
 }
 
+// A path in comparable form: forward slashes, lower case, Git Bash's /c/ as c:/.
+function normPath(p: string): string {
+  return p.replace(/\\/g, '/').replace(/^\/([a-z])\//i, '$1:/').replace(/\/+$/, '').toLowerCase()
+}
+
+// True when the command changes directory (`cd`, `Set-Location`, `pushd`) before
+// `before` ends to somewhere that isn't inside the session's cwd, or somewhere
+// that can't be told (a variable, `~`, a parent folder, no cwd known).
+function leavesCwd(before: string, cwd: string | null): boolean {
+  const base = cwd ? normPath(cwd) : null
+  for (const m of before.matchAll(/(?:^|[;&|\n(])\s*(?:cd|chdir|sl|set-location|pushd)\s+(?:-(?:path|literalpath)\s+|\/d\s+)?(?:"([^"]*)"|'([^']*)'|([^\s;&|)]+))/gi)) {
+    const target = m[1] ?? m[2] ?? m[3] ?? ''
+    if (/[$%~]/.test(target) || target === '-') return true
+    const t = normPath(target)
+    if (!/^(?:[a-z]:\/|\/)/.test(t)) {
+      if (t.split('/').includes('..')) return true
+      continue // below the directory the command started in
+    }
+    if (!base || (t !== base && !t.startsWith(`${base}/`))) return true
+  }
+  return false
+}
+
 // `az repos pr update --id 36067 --query pullRequestId -o tsv` names the PR
 // only by number, so its link is built from the session repo's remote. Skipped
-// when the command names another repository.
-export function adoPrOfCommand(command: string, output: string, remote: string | null): Omit<PrRec, 'at'> | null {
+// when the command names another repository, project or organization, or
+// first changes to a directory outside the session's cwd: a subagent working
+// in another repo's worktree reaches this session's hooks.
+export function adoPrOfCommand(command: string, output: string, remote: string | null, cwd: string | null = null): Omit<PrRec, 'at'> | null {
   const call = command.match(/\baz\s+repos\s+pr\s+(\w[\w-]*)[^;&|\n]*/i)
   const ado = remote ? adoRepoOf(remote) : null
   if (!call || !ado || call[1]?.toLowerCase() === 'list') return null
   const args = call[0]
   const named = args.match(/\s(?:--repository|-r)[=\s]+["']?([^"'\s]+)/)?.[1]
   if (named && decode(named).toLowerCase() !== ado.repo.toLowerCase()) return null
+  const [orgUrl, project] = ado.web.replace(/\/_git\/[^/]+$/, '').match(/^(.*)\/([^/]+)$/)?.slice(1) ?? []
+  const proj = args.match(/\s(?:--project|-p)[=\s]+["']?([^"'\s]+)/)?.[1]
+  if (proj && decode(proj).toLowerCase() !== decode(project ?? '').toLowerCase()) return null
+  const org = args.match(/\s(?:--organization|--org)[=\s]+["']?([^"'\s]+)/)?.[1]
+  if (org && org.replace(/^https:\/\/[^@/]+@/i, 'https://').replace(/\/+$/, '').toLowerCase() !== (orgUrl ?? '').toLowerCase()) return null
+  if (leavesCwd(command.slice(0, call.index), cwd)) return null
   const id = args.match(/\s--id[=\s]+["']?(\d+)/)?.[1] ?? (call[1]?.toLowerCase() === 'create' ? output.trim().match(/(?:^|\n)(\d+)$/)?.[1] : undefined)
   return id ? { url: `${ado.web}/pullrequest/${id}`, repo: ado.repo, number: Number(id), host: 'ado' } : null
 }
@@ -259,21 +293,32 @@ export function scansForPrs(tool: string, input: Record<string, unknown>): boole
 
 // The PRs a finished tool call names: links in its output, or for an
 // `az repos pr` command, the PR it acts on.
-export function prsOfTool(tool: string, input: Record<string, unknown>, output: string, remote: string | null): Omit<PrRec, 'at'>[] {
+export function prsOfTool(tool: string, input: Record<string, unknown>, output: string, remote: string | null, cwd: string | null = null): Omit<PrRec, 'at'>[] {
   const found = prLinksOf(output)
   if (tool === 'Bash' || tool === 'PowerShell') {
-    const byNumber = adoPrOfCommand(typeof input.command === 'string' ? input.command : '', output, remote)
-    if (byNumber) found.push(byNumber)
+    const byNumber = adoPrOfCommand(typeof input.command === 'string' ? input.command : '', output, remote, cwd)
+    // What the output says wins over a guess from the session's remote.
+    if (byNumber && !found.some((p) => p.host === 'ado' && p.number === byNumber.number)) found.push({ ...byNumber, guessed: true })
   }
   return found
 }
 
-// Adds PRs not seen yet and returns those.
+// Adds PRs not seen yet and returns those. A link read from text replaces a
+// guessed one for the same Azure DevOps PR number, in place.
 export function addPrs(board: Board, prs: Omit<PrRec, 'at'>[], now: number): PrRec[] {
   const added: PrRec[] = []
   for (const pr of prs) {
     const same = (p: PrRec) => p.host === pr.host && p.number === pr.number && p.repo.toLowerCase() === pr.repo.toLowerCase()
     if (board.prs.some(same)) continue
+    const sameNumber = (p: PrRec) => pr.host === 'ado' && p.host === 'ado' && p.number === pr.number
+    if (pr.guessed && board.prs.some(sameNumber)) continue
+    const guess = pr.guessed ? -1 : board.prs.findIndex((p) => p.guessed && sameNumber(p))
+    if (guess >= 0) {
+      const rec = { ...pr, at: board.prs[guess]?.at ?? now }
+      board.prs[guess] = rec
+      added.push(rec)
+      continue
+    }
     const rec = { ...pr, at: now }
     board.prs.push(rec)
     added.push(rec)

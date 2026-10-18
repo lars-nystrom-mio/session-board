@@ -520,7 +520,7 @@ export const register: Register = (on) => {
       const result = await next(e)
       outcome = result.deny !== undefined ? 'denied' : result.isError ? 'failed' : 'ok'
       const input = e as unknown as Record<string, unknown>
-      if (outcome === 'ok' && scansForPrs(e.tool, input)) prs = prsOfTool(e.tool, input, result.text ?? '', board?.repo?.remote ?? null)
+      if (outcome === 'ok' && scansForPrs(e.tool, input)) prs = prsOfTool(e.tool, input, result.text ?? '', board?.repo?.remote ?? null, board?.cwd ?? null)
       return result
     } finally {
       toolEnded($, rec, e.tool, outcome, prs)
