@@ -146,7 +146,7 @@ describe('board', () => {
     expect(deriveState(board, true)).toBe('running')
     board.agents.push({ key: 'a', type: 'ci-watcher', description: '', status: 'running', since: 0 })
     expect(deriveState(board, false)).toBe('background')
-    board.waiting = { kind: 'permission', detail: 'Bash', since: 0 }
+    board.waiting = { kind: 'question', detail: 'Which branch?', since: 0 }
     expect(deriveState(board, true)).toBe('waiting')
   })
 

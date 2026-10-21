@@ -38,7 +38,7 @@ export type PrRec = {
 }
 
 export type Waiting = {
-  kind: 'permission' | 'question' | 'plan' | 'notification'
+  kind: 'question' | 'plan'
   detail: string
   tool?: string
   since: number
