@@ -506,7 +506,7 @@ function tileHtml(s) {
   // One fixed slot: the question when the session needs you, otherwise what it's doing.
   let slot = ''
   if (s.waiting) {
-    const word = { permission: 'Needs permission', question: 'Has a question', plan: 'Plan to approve', notification: 'Needs your attention' }[s.waiting.kind]
+    const word = { question: 'Has a question', plan: 'Plan to approve' }[s.waiting.kind]
     slot = `<div class="ask"><b>${word}</b> · ${live(s.waiting.since)}<div class="d">${esc(s.waiting.detail)}</div></div>`
   } else {
     const nameOf = (id) => s.agents.find((a) => a.agentId === id)?.type

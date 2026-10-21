@@ -159,7 +159,7 @@ function schedule($: EngineInterface) {
 }
 
 // The session's transcript. Hooks can't take its path from the classic events,
-// as an organization's security plugin may bypass a plugin's classic hooks.
+// as the built-in cc-plugin-sec-default skips a plugin's classic hooks.
 // Usually it's under the folder named after the cwd; else it's searched for.
 async function findTranscript($: EngineInterface): Promise<string> {
   if (!board) return ''
@@ -466,25 +466,8 @@ function toolEnded($: EngineInterface, rec: ToolRec, tool: string, outcome: 'ok'
   notePrs(prs, agentName(rec.agentId))
   if (outcome === 'denied') event('error', `${rec.tool} denied`, agentName(rec.agentId))
   if (outcome === 'failed') event('error', `${rec.tool} failed${rec.summary ? `: ${rec.summary}` : ''}`, agentName(rec.agentId))
-  if (board?.waiting && (board.waiting.tool === tool || board.waiting.kind === 'notification')) board.waiting = null
+  if (board?.waiting?.tool === tool) board.waiting = null
   schedule($)
-}
-
-function permissionAsked($: EngineInterface, toolName: string, toolInput: unknown) {
-  if (!board) return
-  const detail = summarize(toolName, (toolInput ?? {}) as Record<string, unknown>)
-  setWaiting($, {
-    kind: 'permission',
-    detail: detail ? `${toolLabel(toolName)} · ${detail}` : toolLabel(toolName),
-    tool: toolName,
-    since: now(),
-  })
-}
-
-function notified($: EngineInterface, type: string, message: string) {
-  if (board && type === 'permission_prompt' && !board.waiting) {
-    setWaiting($, { kind: 'notification', detail: clip(message, 160), since: now() })
-  }
 }
 
 export const register: Register = (on) => {
@@ -557,16 +540,5 @@ export const register: Register = (on) => {
     } finally {
       toolEnded($, rec, e.tool, outcome, prs)
     }
-  }).catch(($, e, next) => next(e)) // the board only observes: on failure the call goes on
-
-  // The permission dialog is about to ask the person.
-  on('classic.PermissionRequest', async ($, e, next) => {
-    permissionAsked($, e.tool_name, e.tool_input)
-    return next(e)
-  }).catch(($, e, next) => next(e)) // the board only observes: on failure the call goes on
-
-  on('classic.Notification', async ($, e, next) => {
-    notified($, e.notification_type, e.message)
-    return next(e)
   }).catch(($, e, next) => next(e)) // the board only observes: on failure the call goes on
 }

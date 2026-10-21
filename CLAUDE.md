@@ -67,6 +67,13 @@ SESSION_BOARD_DIR=<scratch dir> claude -p --plugin-dir . --model haiku "<prompt 
 - `turn.complete` with an `agentId` is a subagent finishing. The heartbeat also
   syncs from `$.agent.list()` while any agent is running.
 - `SubagentHandback` is an internal tool; it's in `QUIET_TOOLS`.
+- A plugin's classic hooks don't run. `cc-plugin-sec-default`, a plugin built
+  into Claude Code, takes `classic.SessionStart`, `classic.UserPromptSubmit`,
+  `classic.Notification` and `classic.PermissionRequest` first and sends them
+  on past every user plugin, and the session shows "its classic.… hook was
+  skipped". So the transcript path is computed from the session id, and the
+  **needs you** state covers only `AskUserQuestion` and `ExitPlanMode`, which
+  arrive through `tool.call`. A tile doesn't turn pink on a permission prompt.
 
 ## Windows gotchas
 
@@ -80,22 +87,10 @@ SESSION_BOARD_DIR=<scratch dir> claude -p --plugin-dir . --model haiku "<prompt 
 
 ## Not verified yet
 
-- The **needs you** state: `classic.PermissionRequest`, `AskUserQuestion`,
-  `ExitPlanMode` and the `permission_prompt` notification. These only happen in
-  interactive sessions, so watch a real tile go pink and clear again.
 - The tab title on a live interactive tile. `readTitle` reads the newest
   `custom-title` or `ai-title` record from the transcript at session start and
   when a main turn ends. A headless `/rename` showed up on the tile; headless
   sessions get no `ai-title`.
-- Whether permission prompts turn a tile pink. Questions do: `AskUserQuestion`
-  arrives through `tool.call`. A permission prompt arrives only through
-  `classic.PermissionRequest` or `classic.Notification`, and no status file has
-  recorded one yet. In this organization `cc-plugin-sec-default` bypasses a user
-  plugin's `classic.SessionStart` and `classic.UserPromptSubmit` (the debug log
-  says "bypassed by cc-plugin-sec-default"), so these two may be bypassed as
-  well. That's also why the transcript path is computed from the session id.
-- Whether `classic.PermissionRequest` fires in auto mode when the classifier
-  decides instead of a person.
 
 ## Ideas not built
 

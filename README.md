@@ -56,7 +56,7 @@ credentials and every session's transcript.
 
 | State | Meaning |
 | --- | --- |
-| **needs you** (pink, glowing, sorted first) | a permission prompt, a question, or a plan waiting for approval |
+| **needs you** (pink, glowing, sorted first) | a question or a plan waiting for approval (not a permission prompt: Claude Code skips the hooks that would see one) |
 | **running** (cyan sweep) | the main loop is working on a prompt |
 | **agents running** (purple sweep) | your turn is over, but background subagents are still working |
 | **idle** | done, your move |
