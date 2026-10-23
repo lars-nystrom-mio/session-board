@@ -81,7 +81,17 @@ export type Board = {
   memory?: SessionMemory | null
   // Jobs that will wake this session: CronCreate, /loop and ScheduleWakeup.
   crons?: CronRec[]
+  // Background shells and monitors that haven't reported back yet.
+  shells?: ShellRec[]
+  // Set through the board_status tool: the task the session was started with is
+  // finished. A queue in server/serve.py frees the session's slot on it.
+  done?: { at: number; note: string } | null
 }
+
+// A background task the session will hear from: a Bash or PowerShell call run
+// in the background, or a Monitor. `until` is when the board stops waiting for
+// its notification, which can arrive inside a running turn, where no hook sees it.
+export type ShellRec = { id: string; toolUseId: string; summary: string; since: number; until: number }
 
 // A scheduled job. `cron` is '' for a ScheduleWakeup, which fires once at `nextAt`.
 export type CronRec = {
@@ -627,6 +637,72 @@ export function pruneCrons(board: Board, now: number): void {
   }
 }
 
+export const SHELL_MAX_MS = 2 * 3600_000 // a background shell not heard from in this long is forgotten
+
+// Updates the board's background tasks from a finished tool call: a shell or a
+// Monitor started, or TaskStop stopping one. Returns a line for the timeline.
+export function shellToolDone(board: Board, tool: string, input: Record<string, unknown>, result: unknown, toolUseId: string, now: number): string | null {
+  const r = (result && typeof result === 'object' ? result : {}) as Record<string, unknown>
+  if (tool === 'TaskStop') {
+    const id = str(input.task_id) || str(input.shell_id) || str(r.task_id)
+    const before = board.shells?.length ?? 0
+    board.shells = (board.shells ?? []).filter((s) => s.id !== id)
+    return board.shells.length < before ? `stopped ${id}` : null
+  }
+  const id = tool === 'Monitor' ? str(r.taskId) : tool === 'Bash' || tool === 'PowerShell' ? str(r.backgroundTaskId) : ''
+  if (!id) return null
+  const timeout = tool === 'Monitor' && r.persistent !== true ? num(r.timeoutMs) : null
+  const summary = summarize(tool, input)
+  board.shells = [...(board.shells ?? []).filter((s) => s.id !== id),
+    { id, toolUseId, summary, since: now, until: now + Math.min(timeout ?? SHELL_MAX_MS, SHELL_MAX_MS) }]
+  return `in background: ${summary || tool}`
+}
+
+// A `<task-notification>` turn: the task it reports on has ended.
+export function shellReported(board: Board, text: string): ShellRec | null {
+  const id = text.match(/<task-id>([^<]+)<\/task-id>/)?.[1]?.trim()
+  const use = text.match(/<tool-use-id>([^<]+)<\/tool-use-id>/)?.[1]?.trim()
+  const ended = (board.shells ?? []).find((s) => s.id === id || (use !== undefined && s.toolUseId === use))
+  if (ended) board.shells = (board.shells ?? []).filter((s) => s !== ended)
+  return ended ?? null
+}
+
+export function pruneShells(board: Board, now: number): void {
+  if (board.shells?.length) board.shells = board.shells.filter((s) => s.until > now)
+}
+
+export const BOARD_STATUS_TOOL = {
+  name: 'board_status',
+  description:
+    "Tells the session board (the user's dashboard of Claude Code sessions) where this session stands. " +
+    'Call it with status "done" once the task this session was started with is finished, such as a work item ' +
+    'delivered, and nothing more will happen without the user: a queue of work items waits for it to start ' +
+    'the next session in this repo. Call it with "working" if the user then gives you more to do. ' +
+    'Not after every turn, and not for a step of a larger task.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      status: { type: 'string', enum: ['done', 'working'] },
+      note: { type: 'string', description: 'One line: what was done, or what is left.' },
+    },
+    required: ['status'],
+  },
+}
+
+// A board_status call; returns what the model reads back.
+export function boardStatus(board: Board, input: Record<string, unknown>, now: number): string {
+  const note = clip(str(input.note), 200)
+  if (input.status === 'done') {
+    board.done = { at: now, note }
+    return 'Recorded: done. The board frees this session for the next queued work item once the turn ends.'
+  }
+  if (input.status === 'working') {
+    board.done = null
+    return 'Recorded: working.'
+  }
+  return 'status must be "done" or "working"; nothing recorded.'
+}
+
 export function pushEvent(board: Board, event: BoardEvent): void {
   board.events.push(event)
   if (board.events.length > MAX_EVENTS) board.events.splice(0, board.events.length - MAX_EVENTS)
@@ -693,5 +769,7 @@ export function freshBoard(sessionId: string, cwd: string, now: number): Board {
     cache: null,
     memory: null,
     crons: [],
+    shells: [],
+    done: null,
   }
 }

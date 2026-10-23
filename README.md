@@ -52,7 +52,7 @@ folder.
 Serve only the board folder, never `.claude` itself: that holds your
 credentials and every session's transcript.
 
-### Start a session from the board
+### Queue work items from the board
 
 On Windows, serve the page with the bundled server instead, from this repo:
 
@@ -62,13 +62,36 @@ python server\serve.py
 
 Stop `python -m http.server` first: both use port 8765. It serves the same
 folder, except that the page itself comes from the repo, so an edit shows on the
-next reload. It adds a **deliver** form to the header: pick a project, type a work item number, and it opens
-`claude "deliver #1234"` in that folder in a new Windows Terminal tab (a new
-console window without Windows Terminal). The session shows up as a tile like
-any other, with the work item on it from the start. Change what it's started
-with using `--prompt "/my-skill #{id}"` (keep the `#` so the tile can read the
-number before the skill runs);
-`--port` and `--dir` work as you'd expect.
+next reload. It adds a **queue** form to the header: pick a project, type a work
+item number, and the item joins the queue. When the project has a free slot, the
+server opens `claude "deliver #1234"` in that folder in a new Windows Terminal
+tab (a new console window without Windows Terminal). The session shows up as a
+tile like any other, with the work item on it from the start.
+
+A project runs one queued item at a time unless you raise its limit with the
+select next to it. Raise it only for repos where parallel sessions don't trip
+over each other: two sessions in one working copy share its checkout, its ports
+and its build output. `--max-sessions` (4) caps queued sessions across all
+projects. Only queued items count against these limits, not sessions you start
+yourself.
+
+A slot frees when the session is finished:
+
+- it called the board's `board_status` tool with `done` and its turn ended. The
+  plugin offers the tool to every session, and its description asks the model
+  to call it when the task it was started with is finished;
+- or it has sat idle for `--idle-minutes` (15) with no background command,
+  monitor or scheduled job pending. A session that **needs you** keeps its slot;
+- or it ended, or stopped writing its status file.
+
+The list above the tiles shows what runs, what waits (move an item to the front
+or cancel it) and what just finished and why. **release** frees a running item's
+slot by hand. The queue is kept in `queue.json` in the board folder, so it
+survives a restart of the server.
+
+Change what a session is started with using `--prompt "/my-skill #{id}"` (keep
+the `#` so the tile can read the number before the skill runs); `--port` and
+`--dir` work as you'd expect.
 
 The projects are the folders that sessions on the board have run in (the repo's
 root when there is one). The form appears once there is at least one. The server
