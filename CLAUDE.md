@@ -67,6 +67,11 @@ SESSION_BOARD_DIR=<scratch dir> claude -p --plugin-dir . --model haiku "<prompt 
 - `turn.complete` with an `agentId` is a subagent finishing. The heartbeat also
   syncs from `$.agent.list()` while any agent is running.
 - `SubagentHandback` is an internal tool; it's in `QUIET_TOOLS`.
+- Scheduled jobs come from `CronCreate`/`CronList`/`CronDelete`/`ScheduleWakeup`
+  results. `nextFireAt` includes a per-job offset of up to half the period, so
+  later firings are computed from the cron expression plus that offset. A
+  firing is a `turn.start` whose text is the job's prompt (`turn.start` has no
+  origin; `prompt.submit` does). `$` has no API to list a session's jobs.
 - A plugin's classic hooks don't run. `cc-plugin-sec-default`, a plugin built
   into Claude Code, takes `classic.SessionStart`, `classic.UserPromptSubmit`,
   `classic.Notification` and `classic.PermissionRequest` first and sends them

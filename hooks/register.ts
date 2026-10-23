@@ -14,6 +14,8 @@ import {
   cacheTtlOf,
   agentStatusOf,
   clip,
+  cronFired,
+  cronToolDone,
   deriveState,
   freshBoard,
   memoryOf,
@@ -21,6 +23,7 @@ import {
   prLinksOf,
   prsOfTool,
   projectDirName,
+  pruneCrons,
   pushEvent,
   scansForPrs,
   sessionTitleOf,
@@ -274,6 +277,7 @@ async function tick($: EngineInterface) {
   if (ticks % SLOW_EVERY === 0) await refreshSlow($)
   if (ticks % MEMORY_EVERY === 0) await sampleMemory($)
   if (board?.agents.some((a) => a.status === 'running' || a.status === 'idle')) await syncAgents($)
+  if (board) pruneCrons(board, now())
   await flush($)
 }
 
@@ -306,6 +310,7 @@ async function init($: EngineInterface, cwd: string, interactive: boolean, reaso
   board.tabTitle ??= null
   board.cache ??= null
   board.memory ??= null
+  board.crons ??= []
   transcriptPath = ''
   memoryPid = 0
   memoryFailures = 0
@@ -373,6 +378,7 @@ async function endSession($: EngineInterface, reason: string) {
   board.endReason = reason
   board.waiting = null
   for (const a of board.agents) if (a.status === 'running' || a.status === 'idle') a.status = 'done'
+  board.crons = [] // session-scoped jobs end with the session
   tools.clear()
   event('session', `ended (${reason})`)
   await flush($)
@@ -388,6 +394,8 @@ async function turnStarted($: EngineInterface, text: string) {
   b.turns++
   b.waiting = null
   const handback = /^\s*<(agent-message|task-notification)[\s>]/.test(text)
+  const fired = cronFired(b, text, now())
+  if (fired) event('turn', `${fired.human} fired`)
   if (handback) {
     // A subagent reporting back, not the person: keep the prompt as it was.
     const from = text.match(/^\s*<[^>]*\sfrom="([^"]*)"/)?.[1]
@@ -530,6 +538,10 @@ export const register: Register = (on) => {
       const result = await next(e)
       outcome = result.deny !== undefined ? 'denied' : result.isError ? 'failed' : 'ok'
       const input = e as unknown as Record<string, unknown>
+      if (outcome === 'ok' && board) {
+        const line = cronToolDone(board, e.tool, input, result.result, now())
+        if (line) event('tool', line, agentName(e.agentId))
+      }
       if (outcome === 'ok' && scansForPrs(e.tool, input)) {
         const found = prsOfTool(e.tool, input, result.text ?? '', board?.repo?.remote ?? null)
         prs = found.prs
