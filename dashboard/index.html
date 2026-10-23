@@ -49,6 +49,19 @@
   .sort button:hover { color: var(--text); }
   .sort button[aria-pressed="true"] { color: var(--text); border-color: var(--line); background: var(--card); }
   .sort button:focus-visible { outline: 2px solid var(--run); outline-offset: 1px; }
+  /* Start a session for a work item; shown only when server/serve.py serves the page. */
+  .launch { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 12px; color: var(--faint); }
+  .launch[hidden] { display: none; }
+  .launch select, .launch input, .launch button {
+    font: inherit; color: var(--text); background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 2px 7px;
+  }
+  .launch select { max-width: 160px; }
+  .launch input { width: 9ch; }
+  .launch button { cursor: pointer; color: var(--run); }
+  .launch button:disabled { cursor: default; color: var(--faint); }
+  .launch :focus-visible { outline: 2px solid var(--run); outline-offset: 1px; }
+  .launch output { color: var(--muted); white-space: nowrap; }
+  .launch output.error { color: var(--you); }
   .status { font-family: var(--mono); font-size: 12px; color: var(--muted); }
   .status .dot {
     display: inline-block; width: 7px; height: 7px; border-radius: 50%;
@@ -276,6 +289,12 @@
 <header>
   <h1>Sessions</h1>
   <div class="summary" id="summary"></div>
+  <form class="launch" id="launch" hidden>
+    <select id="launch-cwd" aria-label="Project" required></select>
+    <input id="launch-id" aria-label="Work item number" placeholder="#1234" inputmode="numeric" pattern="#?\d{1,9}" required>
+    <button id="launch-go">deliver</button>
+    <output id="launch-out" aria-live="polite"></output>
+  </form>
   <div class="sort" role="group" aria-label="Sort sessions">
     <span>sort</span>
     <button data-sort="started" aria-pressed="true">started</button>
@@ -793,6 +812,54 @@ document.addEventListener('click', async (e) => {
 })
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDrawer() })
 
+// ---- Launch ---------------------------------------------------------------
+
+// server/serve.py answers api/launch; python -m http.server doesn't, and the
+// form stays hidden.
+let launchServed = null  // unknown until the first answer
+async function loadLaunch() {
+  let info
+  try {
+    info = JSON.parse(await fetchText('api/launch'))
+  } catch {
+    launchServed ??= false
+    return
+  }
+  launchServed = true
+  const select = $('launch-cwd')
+  const chosen = select.value
+  select.innerHTML = info.projects.map((p) => `<option value="${esc(p.path)}" title="${esc(p.path)}">${esc(p.name)}</option>`).join('')
+  if (info.projects.some((p) => p.path === chosen)) select.value = chosen
+  $('launch-go').title = `starts claude "${info.prompt}" in a new terminal`
+  $('launch').hidden = !info.projects.length
+}
+
+$('launch-cwd').addEventListener('focus', loadLaunch)
+$('launch').addEventListener('submit', async (e) => {
+  e.preventDefault()
+  const out = $('launch-out')
+  const go = $('launch-go')
+  go.disabled = true
+  out.className = ''
+  out.textContent = 'starting…'
+  try {
+    const res = await fetch('api/launch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workItem: $('launch-id').value, cwd: $('launch-cwd').value }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+    out.textContent = `started #${data.workItem}`
+    $('launch-id').value = ''
+  } catch (err) {
+    out.className = 'error'
+    out.textContent = err.message
+  } finally {
+    go.disabled = false
+  }
+})
+
 // ---- Poll -----------------------------------------------------------------
 
 let pollTimer = null
@@ -805,6 +872,8 @@ async function poll() {
   try {
     sessions = await loadSessions()
     render()
+    // No projects yet when the page loaded: look again once a session shows up.
+    if (launchServed && $('launch').hidden && sessions.length) loadLaunch()
     status.className = 'status'
     status.innerHTML = `<span class="dot"></span>${clock(Date.now())}`
   } catch (err) {
@@ -822,6 +891,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) poll
 
 markSort()
 loadPhases().then(poll)
+loadLaunch()
 </script>
 </body>
 </html>
