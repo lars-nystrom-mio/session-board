@@ -19,15 +19,28 @@ install it and how to serve the page. This file is for working on it.
 - `dashboard/index.html`: one self-contained page. It lists `sessions/` through
   the directory index that `python -m http.server` serves, polls every 2 s, and
   keys tiles by session id so CSS animations survive polls. It shows the
-  **deliver** form only when `GET api/launch` answers, so it still works under
-  `python -m http.server`.
+  **queue** form and list only when `GET api/queue` answers, so it still works
+  under `python -m http.server`.
 - `server/serve.py`: optional stdlib server for the board folder, but `/`
   comes from `dashboard/index.html` in the repo. It turns off `SO_REUSEADDR` on
   Windows, where it would let it bind a port another server holds. It adds
-  `api/launch`, which opens an interactive `claude "<prompt>"` for a work item in
-  a folder that some status file reports. It takes no free text, checks `Host`,
-  `Origin` and the JSON content type, and never answers CORS preflights.
-  Tests in `server/test_serve.py`.
+  `api/queue`, a queue of work items in `<board>/queue.json`. A thread starts an
+  item as an interactive `claude --session-id <uuid> "<prompt>"` when its
+  project (a folder that some status file reports) has a free slot, one by
+  default, and frees the slot from that session's status file (`slot_free`). It
+  takes no free text, checks `Host`, `Origin` and the JSON content type, and
+  never answers CORS preflights. Tests in `server/test_serve.py`.
+
+## How the queue knows a session is finished
+
+The hooks register a `board_status` tool (`mcp__session-board__board_status`,
+not deferred) whose description tells the model to call it with `done` when the
+task it was started with is finished. That sets `done` in the status file, and
+the slot frees once the main turn has ended. Otherwise the slot frees after
+`--idle-minutes` idle with no scheduled job and no background shell or Monitor
+(`shells`, removed by the `<task-notification>` turn that names it, by TaskStop,
+or after 2 h, since a notification delivered into a running turn never reaches
+a hook). **Needs you** never frees a slot. A new prompt after `done` clears it.
 
 The plugin is installed at user scope from a local marketplace (this folder), so
 every session runs this working copy. After an edit, run `/reload-plugins` in a
@@ -42,7 +55,8 @@ cd server && python -m unittest
 ```
 
 Test the server against a scratch board with `--dir <scratch> --port 8799`. Run
-it with `claude` off `PATH` to exercise a valid launch without opening a session.
+it with `claude` off `PATH` to exercise the queue without opening a session: the
+item goes `failed` with "claude is not on PATH".
 
 Type-check against the engine's API types. When a session loads the mod with
 `claude --plugin-dir .`, the engine writes them to `.claude-plugin/types/`
@@ -110,17 +124,15 @@ SESSION_BOARD_DIR=<scratch dir> claude -p --plugin-dir . --model haiku "<prompt 
   when a main turn ends. A headless `/rename` showed up on the tile; headless
   sessions get no `ai-title`.
 
-- An actual launch from the **deliver** form: the Windows Terminal tab, and
-  that the session's tile appears.
+- An actual start from the queue: the Windows Terminal tab, that
+  `--session-id` gives the status file the name the queue waits for, and that
+  a delivery run calls `board_status` at its end without being told to.
 
 ## Ideas not built
 
-- A queue in `serve.py`: run several work items with at most N sessions at a
-  time, starting the next one when a status file says one has ended.
-
 - Delete status files of long-ended sessions. `$.fs` has no delete, so this
   would need `$.process.run`, or the dashboard keeps hiding them after 24 h.
-- A `board_status` tool that skills call to report exact phases, instead of
-  phases inferred from subagent types (`DEFAULT_PHASES` and `phases.json`).
+- Let `board_status` report exact phases too, instead of phases inferred from
+  subagent types (`DEFAULT_PHASES` and `phases.json`).
 - Run the server outside a Claude session, for example as a scheduled task at
   logon.

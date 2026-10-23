@@ -7,12 +7,14 @@ import {
   type PrRec,
   type ToolRec,
   type Waiting,
+  BOARD_STATUS_TOOL,
   QUIET_TOOLS,
   addPrs,
   adoPrLink,
   adoPrShowArgv,
   cacheTtlOf,
   agentStatusOf,
+  boardStatus,
   clip,
   cronFired,
   cronToolDone,
@@ -24,9 +26,12 @@ import {
   prsOfTool,
   projectDirName,
   pruneCrons,
+  pruneShells,
   pushEvent,
   scansForPrs,
   sessionTitleOf,
+  shellReported,
+  shellToolDone,
   slashCommand,
   summarize,
   toolLabel,
@@ -79,6 +84,8 @@ let transcriptPath = ''
 let memoryPid = 0
 let memoryFailures = 0
 const tools = new Map<string, ToolRec>()
+// What the model calls board_status as: mcp__<plugin>__board_status.
+let boardTool = 'mcp__session-board__board_status'
 
 const now = () => Date.now()
 
@@ -277,7 +284,10 @@ async function tick($: EngineInterface) {
   if (ticks % SLOW_EVERY === 0) await refreshSlow($)
   if (ticks % MEMORY_EVERY === 0) await sampleMemory($)
   if (board?.agents.some((a) => a.status === 'running' || a.status === 'idle')) await syncAgents($)
-  if (board) pruneCrons(board, now())
+  if (board) {
+    pruneCrons(board, now())
+    pruneShells(board, now())
+  }
   await flush($)
 }
 
@@ -311,6 +321,8 @@ async function init($: EngineInterface, cwd: string, interactive: boolean, reaso
   board.cache ??= null
   board.memory ??= null
   board.crons ??= []
+  board.shells ??= []
+  board.done ??= null
   transcriptPath = ''
   memoryPid = 0
   memoryFailures = 0
@@ -324,6 +336,9 @@ async function init($: EngineInterface, cwd: string, interactive: boolean, reaso
   } catch {}
   event('session', previous && previous.state !== 'ended' ? 'board reloaded' : reason)
 
+  try {
+    boardTool = (await $.tool.register({ ...BOARD_STATUS_TOOL, isDeferred: false })).tool
+  } catch {}
   await copyDashboard($, dir)
   await refreshSlow($)
   await readTranscript($)
@@ -341,6 +356,16 @@ async function ensure($: EngineInterface): Promise<Board | null> {
     await init($, await $.session.cwd(), true, 'session cleared')
   } catch {}
   return board
+}
+
+// The board's own tool: the model says the task it was started with is done.
+async function boardStatusCalled($: EngineInterface, input: Record<string, unknown>): Promise<string> {
+  const b = await ensure($)
+  if (!b) return 'The board is not running in this session; nothing recorded.'
+  const reply = boardStatus(b, input, now())
+  event('turn', b.done ? `done${b.done.note ? `: ${b.done.note}` : ''}` : 'working again')
+  schedule($)
+  return reply
 }
 
 function setWaiting($: EngineInterface, waiting: Waiting) {
@@ -379,6 +404,7 @@ async function endSession($: EngineInterface, reason: string) {
   board.waiting = null
   for (const a of board.agents) if (a.status === 'running' || a.status === 'idle') a.status = 'done'
   board.crons = [] // session-scoped jobs end with the session
+  board.shells = []
   tools.clear()
   event('session', `ended (${reason})`)
   await flush($)
@@ -399,7 +425,8 @@ async function turnStarted($: EngineInterface, text: string) {
   if (handback) {
     // A subagent reporting back, not the person: keep the prompt as it was.
     const from = text.match(/^\s*<[^>]*\sfrom="([^"]*)"/)?.[1]
-    event('agent', `report from ${agentName(from) ?? 'a subagent'}`)
+    const shell = shellReported(b, text)
+    event(shell ? 'tool' : 'agent', shell ? `background done: ${shell.summary}` : `report from ${agentName(from) ?? 'a subagent'}`)
     notePrs(prLinksOf(text), agentName(from))
   } else if (text.trim()) {
     const slash = slashCommand(text)
@@ -408,6 +435,8 @@ async function turnStarted($: EngineInterface, text: string) {
     b.promptAt = now()
     event('prompt', shown)
     if (slash) setSkill(slash.name, slash.args)
+    // More to do after it said it was done; a cron firing counts too.
+    if (b.done) b.done = null
     notePrs(prLinksOf(text))
     b.workItem = workItemOf(shown, false) ?? b.workItem
   }
@@ -530,6 +559,7 @@ export const register: Register = (on) => {
   }).catch(($, e, next) => next(e)) // the board only observes: on failure the call goes on
 
   on('tool.call', async ($, e, next) => {
+    if (e.tool === boardTool) return { result: await boardStatusCalled($, e as unknown as Record<string, unknown>) }
     const rec = await toolStarted($, e.tool, e as unknown as Record<string, unknown>, e.tool_use_id, e.agentId)
     if (!rec) return next(e)
     let outcome: 'ok' | 'denied' | 'failed' = 'failed'
@@ -539,7 +569,7 @@ export const register: Register = (on) => {
       outcome = result.deny !== undefined ? 'denied' : result.isError ? 'failed' : 'ok'
       const input = e as unknown as Record<string, unknown>
       if (outcome === 'ok' && board) {
-        const line = cronToolDone(board, e.tool, input, result.result, now())
+        const line = cronToolDone(board, e.tool, input, result.result, now()) ?? shellToolDone(board, e.tool, input, result.result, e.tool_use_id, now())
         if (line) event('tool', line, agentName(e.agentId))
       }
       if (outcome === 'ok' && scansForPrs(e.tool, input)) {

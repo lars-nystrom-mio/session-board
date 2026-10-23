@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'claude-code/testing'
-import { addPrs, adoOrgOf, cronFired, cronToolDone, nextCronMatch, pruneCrons, CRON_EXPIRY_MS, WAKEUP_ID, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, childLabel, deriveState, freshBoard, memoryOf, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, summarize, toolLabel, trimAgents, workItemOf, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
+import { boardStatus, pruneShells, shellReported, shellToolDone, SHELL_MAX_MS, addPrs, adoOrgOf, cronFired, cronToolDone, nextCronMatch, pruneCrons, CRON_EXPIRY_MS, WAKEUP_ID, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, childLabel, deriveState, freshBoard, memoryOf, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, summarize, toolLabel, trimAgents, workItemOf, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
 
 describe('summaries', () => {
   test('a tool call becomes one short line', async () => {
@@ -166,6 +166,13 @@ describe('board', () => {
   })
 })
 
+test('the board answers its own board_status tool', async ($) => {
+  const result = await $.tool.call({ tool: 'mcp__session-board__board_status', status: 'done', note: 'merged' })
+  expect(result.deny).toBe(undefined)
+  // The kit has no session to start the board in; the tool still answers.
+  expect(String(result.result)).toMatch(/^Recorded: done|nothing recorded/)
+})
+
 test('the board never gets in the way of a tool call', async ($, on) => {
   on('tool.call', { tool: 'Bash' }, () => ({ result: 'hi' }))
   const result = await $.tool.call({ tool: 'Bash', command: 'echo hi' })
@@ -321,5 +328,40 @@ describe('scheduled jobs', () => {
     expect(board.crons?.map((c) => c.id)).toEqual(['h'])
     pruneCrons(board, created + CRON_EXPIRY_MS)
     expect(board.crons).toEqual([])
+  })
+})
+
+describe('background tasks', () => {
+  test('a background shell is kept until its notification names it', async () => {
+    const board = freshBoard('s1', '/x', 0)
+    expect(shellToolDone(board, 'Bash', { command: 'ado-watch.sh 123' }, { stdout: '', backgroundTaskId: 'b1' }, 'toolu_1', 10)).toBe('in background: ado-watch.sh 123')
+    expect(shellToolDone(board, 'Bash', { command: 'ls' }, { stdout: 'a' }, 'toolu_2', 10)).toBe(null)
+    expect(shellToolDone(board, 'Monitor', { description: 'watch' }, { taskId: 'm1', timeoutMs: 60_000 }, 'toolu_3', 10)).toBe('in background: watch')
+    expect(board.shells?.map((s) => [s.id, s.until])).toEqual([['b1', 10 + SHELL_MAX_MS], ['m1', 60_010]])
+    expect(shellReported(board, '<task-notification>\n<task-id>other</task-id>\n<tool-use-id>toolu_1</tool-use-id>')?.id).toBe('b1')
+    expect(shellReported(board, '<task-notification>\n<task-id>nope</task-id>')).toBe(null)
+    expect(shellToolDone(board, 'TaskStop', { task_id: 'm1' }, { message: '', task_id: 'm1', task_type: 'monitor' }, 'toolu_4', 20)).toBe('stopped m1')
+    expect(board.shells).toEqual([])
+  })
+
+  test('a shell never heard from is dropped in the end', async () => {
+    const board = freshBoard('s1', '/x', 0)
+    shellToolDone(board, 'PowerShell', { command: 'sleep' }, { backgroundTaskId: 'p1' }, 't', 0)
+    pruneShells(board, SHELL_MAX_MS - 1)
+    expect(board.shells?.length).toBe(1)
+    pruneShells(board, SHELL_MAX_MS)
+    expect(board.shells?.length).toBe(0)
+  })
+})
+
+describe('board_status', () => {
+  test('done and working set and clear the flag', async () => {
+    const board = freshBoard('s1', '/x', 0)
+    boardStatus(board, { status: 'done', note: 'PR !12 merged' }, 5)
+    expect(board.done).toEqual({ at: 5, note: 'PR !12 merged' })
+    expect(boardStatus(board, { status: 'maybe' }, 6)).toMatch(/nothing recorded/)
+    expect(board.done?.at).toBe(5)
+    boardStatus(board, { status: 'working' }, 7)
+    expect(board.done).toBe(null)
   })
 })
