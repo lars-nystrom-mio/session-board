@@ -1,6 +1,6 @@
 """Serves the session board and starts a Claude Code session per work item.
 
-    python server/serve.py [--port 8765] [--dir <board folder>] [--prompt "deliver {id}"]
+    python server/serve.py [--port 8765] [--dir <board folder>] [--prompt "deliver #{id}"]
 
 GET serves the board folder like `python -m http.server`, directory index
 included, so the page reads `sessions/` the same way.
@@ -178,7 +178,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--dir", type=Path, default=default_board_dir(), help="the board folder")
-    ap.add_argument("--prompt", default="deliver {id}",
+    # The '#' lets the tile show the work item from the first prompt, before a skill runs.
+    ap.add_argument("--prompt", default="deliver #{id}",
                     help="what a new session is started with; {id} is the work item number")
     args = ap.parse_args()
     if "{id}" not in args.prompt:

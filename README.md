@@ -63,9 +63,11 @@ python server\serve.py
 Stop `python -m http.server` first: both use port 8765. It serves the same
 folder, except that the page itself comes from the repo, so an edit shows on the
 next reload. It adds a **deliver** form to the header: pick a project, type a work item number, and it opens
-`claude "deliver 1234"` in that folder in a new Windows Terminal tab (a new
+`claude "deliver #1234"` in that folder in a new Windows Terminal tab (a new
 console window without Windows Terminal). The session shows up as a tile like
-any other. Change what it's started with using `--prompt "/my-skill {id}"`;
+any other, with the work item on it from the start. Change what it's started
+with using `--prompt "/my-skill #{id}"` (keep the `#` so the tile can read the
+number before the skill runs);
 `--port` and `--dir` work as you'd expect.
 
 The projects are the folders that sessions on the board have run in (the repo's
