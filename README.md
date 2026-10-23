@@ -52,6 +52,26 @@ folder.
 Serve only the board folder, never `.claude` itself: that holds your
 credentials and every session's transcript.
 
+### Start a session from the board
+
+On Windows, serve the page with the bundled server instead, from this repo:
+
+```powershell
+python server\serve.py
+```
+
+It serves the same folder on the same port, and adds a **deliver** form to the
+header: pick a project, type a work item number, and it opens
+`claude "deliver 1234"` in that folder in a new Windows Terminal tab (a new
+console window without Windows Terminal). The session shows up as a tile like
+any other. Change what it's started with using `--prompt "/my-skill {id}"`;
+`--port` and `--dir` work as you'd expect.
+
+The projects are the folders that sessions on the board have run in (the repo's
+root when there is one). The form appears once there is at least one. The server
+takes only a work item number and one of those folders, and refuses requests
+from any page but the board itself.
+
 ## What a tile shows
 
 | State | Meaning |
@@ -124,6 +144,7 @@ The work item is taken from the skill's arguments (`deliver 1234` →
 ```
 claude plugin validate .
 claude plugin test .
+cd server && python -m unittest
 ```
 
 Status files of ended sessions are never deleted by the mod. The dashboard hides

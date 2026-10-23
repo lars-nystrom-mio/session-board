@@ -18,7 +18,14 @@ install it and how to serve the page. This file is for working on it.
 - `hooks/board.test.ts`: tests, run by `claude plugin test .`.
 - `dashboard/index.html`: one self-contained page. It lists `sessions/` through
   the directory index that `python -m http.server` serves, polls every 2 s, and
-  keys tiles by session id so CSS animations survive polls.
+  keys tiles by session id so CSS animations survive polls. It shows the
+  **deliver** form only when `GET api/launch` answers, so it still works under
+  `python -m http.server`.
+- `server/serve.py`: optional stdlib server for the board folder. It adds
+  `api/launch`, which opens an interactive `claude "<prompt>"` for a work item in
+  a folder that some status file reports. It takes no free text, checks `Host`,
+  `Origin` and the JSON content type, and never answers CORS preflights.
+  Tests in `server/test_serve.py`.
 
 The plugin is installed at user scope from a local marketplace (this folder), so
 every session runs this working copy. After an edit, run `/reload-plugins` in a
@@ -29,7 +36,11 @@ session to pick it up there.
 ```
 claude plugin validate .
 claude plugin test .
+cd server && python -m unittest
 ```
+
+Test the server against a scratch board with `--dir <scratch> --port 8799`. Run
+it with `claude` off `PATH` to exercise a valid launch without opening a session.
 
 Type-check against the engine's API types. When a session loads the mod with
 `claude --plugin-dir .`, the engine writes them to `.claude-plugin/types/`
@@ -97,7 +108,13 @@ SESSION_BOARD_DIR=<scratch dir> claude -p --plugin-dir . --model haiku "<prompt 
   when a main turn ends. A headless `/rename` showed up on the tile; headless
   sessions get no `ai-title`.
 
+- An actual launch from the **deliver** form: the Windows Terminal tab, and
+  that the session's tile appears.
+
 ## Ideas not built
+
+- A queue in `serve.py`: run several work items with at most N sessions at a
+  time, starting the next one when a status file says one has ended.
 
 - Delete status files of long-ended sessions. `$.fs` has no delete, so this
   would need `$.process.run`, or the dashboard keeps hiding them after 24 h.
