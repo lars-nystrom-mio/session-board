@@ -1,0 +1,26 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "marquee",
+        "value": "*",
+        "files": [
+          "dashboard/index.html"
+        ],
+        "createdAt": "2026-10-23T06:02:57.733Z",
+        "reason": "Claude's judgment: the 2px sweep on running/background tiles is a live activity indicator, not scrolling content; reduced-motion already disables it"
+      },
+      {
+        "rule": "dark-glow",
+        "value": "*",
+        "files": [
+          "dashboard/index.html"
+        ],
+        "createdAt": "2026-10-23T06:03:02.012Z",
+        "reason": "Claude's judgment: the pink glow is the dashboard's only 'needs you' alert, intentional and limited to waiting tiles"
+      }
+    ]
+  }
+}

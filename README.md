@@ -76,6 +76,12 @@ minute through PowerShell, with a two-hour trend line. It turns orange at 1 GB.
 The drawer breaks it down per MCP server and shows how much `claude.exe` has
 grown since the first sample.
 
+A session that scheduled its own wakeups (`CronCreate`, `/loop`,
+`ScheduleWakeup`) shows ⏱ and a countdown to the next one, with every job on
+hover. The drawer lists each job's schedule, prompt and next firing. The board
+sees jobs created while it was loaded, or all of them once the session calls
+`CronList`; jobs that outlive the session (`durable`) aren't shown.
+
 Phases come from the newest running subagent's type, then from the running
 skill. Out of the box:
 

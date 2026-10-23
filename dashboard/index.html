@@ -13,8 +13,8 @@
     --card-hover: #252835;
     --line: #2b2e3b;
     --text: #e4e5ea;
-    --muted: #868ba0;
-    --faint: #5b6075;
+    --muted: #a3a8bb;
+    --faint: #8a8fa4;  /* 4.5:1 or more on every surface, hover included */
     --run: #8be9fd;
     --ok: #50fa7b;
     --warn: #ffb86c;
@@ -178,7 +178,8 @@
   .meter { flex: 1; max-width: 120px; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
   .meter i { display: block; height: 100%; background: var(--muted); border-radius: 2px; transition: width .6s ease; }
   .meter.hot i { background: var(--warn); }
-  .cache.low { color: var(--warn); }
+  .countdown.low { color: var(--warn); }
+  .sched { color: var(--muted); white-space: nowrap; }
   .mem { display: inline-flex; align-items: center; gap: 4px; }
   .mem svg { width: 36px; height: 10px; overflow: visible; }
   .mem polyline { fill: none; stroke: currentColor; stroke-width: 1.2; vector-effect: non-scaling-stroke; }
@@ -210,15 +211,15 @@
   .open .scrim { opacity: 1; pointer-events: auto; }
   .open .drawer { transform: none; }
   .d-head { position: sticky; top: 0; z-index: 1; background: var(--panel); padding: 20px 24px 14px; border-bottom: 1px solid var(--line); }
-  .d-head h3 { margin: 2px 40px 4px 0; font-size: 16px; font-weight: 600; line-height: 1.35; }
+  .d-head h2 { margin: 2px 40px 4px 0; font-size: 16px; font-weight: 600; line-height: 1.35; }
   .close {
     position: absolute; top: 16px; right: 16px; width: 32px; height: 32px; border-radius: 8px;
     border: 1px solid var(--line); background: none; cursor: pointer; color: var(--muted); font-size: 18px; line-height: 1;
   }
   .close:hover { color: var(--text); border-color: var(--muted); }
   .d-body { padding: 18px 24px 60px; }
-  .d-body h4 { margin: 22px 0 8px; font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
-  .d-body h4:first-child { margin-top: 0; }
+  .d-body h3 { margin: 22px 0 8px; font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
+  .d-body h3:first-child { margin-top: 0; }
   .kv { display: grid; grid-template-columns: 110px 1fr; gap: 4px 12px; font-size: 12.5px; }
   .kv dt { color: var(--faint); }
   .kv dd { margin: 0; font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
@@ -297,7 +298,7 @@
   <aside class="drawer" role="dialog" aria-modal="true" aria-labelledby="d-title">
     <div class="d-head">
       <div class="branch" id="d-sub"></div>
-      <h3 id="d-title"></h3>
+      <h2 id="d-title"></h2>
       <button class="close" data-close aria-label="Close">×</button>
     </div>
     <div class="d-body" id="d-body"></div>
@@ -394,7 +395,7 @@ const clock = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minut
 
 // Counts down to `until`; tick() fills it in and swaps to `expired` once past.
 const countdown = (until, prefix, expired) =>
-  `<span class="cache" data-until="${until}" data-prefix="${esc(prefix)}" data-expired="${esc(expired)}"></span>`
+  `<span class="countdown" data-until="${until}" data-prefix="${esc(prefix)}" data-expired="${esc(expired)}"></span>`
 
 // The main thread's prompt cache, while nothing keeps it warm. Sessions that
 // haven't reported a TTL yet are assumed to have the default hour.
@@ -435,6 +436,22 @@ function memHtml(s) {
   const trend = memTrend(m)
   const title = `claude.exe ${mb(m.mb)} (${mb(m.wsMb)} in RAM) + ${mb(m.childMb)} started by it${trend ? `\nclaude.exe ${trend}` : ''}`
   return `<span class="mem ${memTotal(m) >= MEM_HOT_MB ? 'hot' : ''}" title="${esc(title)}">${sparkline(m.history)}${mb(memTotal(m))}</span>`
+}
+
+// Jobs that will wake the session, soonest first; those with no next time last.
+const cronsOf = (s) => [...(s.crons || [])].sort((a, b) => (a.nextAt ?? Infinity) - (b.nextAt ?? Infinity))
+// A job's next time: the clock today, with the weekday on any other day.
+const day = (t) => new Date(t).toLocaleString([], new Date(t).toDateString() === new Date().toDateString()
+  ? { hour: '2-digit', minute: '2-digit' }
+  : { weekday: 'short', hour: '2-digit', minute: '2-digit' })
+const cronLine = (c) => `${c.human} · ${c.nextAt ? `next ${day(c.nextAt)}` : 'no next time'}${c.recurring ? '' : ' (once)'}\n${c.prompt}`
+function schedHtml(s) {
+  const crons = cronsOf(s)
+  const next = crons[0]
+  if (!next) return ''
+  const title = crons.map(cronLine).join('\n\n')
+  const more = crons.length > 1 ? ` +${crons.length - 1}` : ''
+  return `<span class="sched" title="${esc(title)}">⏱ ${next.nextAt ? countdown(next.nextAt, '', 'due') : esc(next.human)}${more}</span>`
 }
 
 const isStale = (s) => s.state !== 'ended' && Date.now() - s.updatedAt > STALE_MS
@@ -538,6 +555,7 @@ function tileHtml(s) {
       ${s.costUsd != null ? `<span>$${s.costUsd.toFixed(2)}</span>` : ''}
       ${memHtml(s)}
       ${cacheHtml(s)}
+      ${schedHtml(s)}
       <span>${s.turns} turn${s.turns === 1 ? '' : 's'}</span>
       ${s.model ? `<span>${esc(shortModel(s.model))}</span>` : ''}
       ${s.prs?.length ? `<span class="prs">${[...s.prs].reverse().map((p) => `
@@ -676,7 +694,7 @@ function cacheDrawerText(s) {
 
 function drawerHtml(s) {
   const out = []
-  out.push(`<h4>Session</h4><dl class="kv">
+  out.push(`<h3>Session</h3><dl class="kv">
     <dt>state</dt><dd>${esc(isStale(s) ? 'no heartbeat' : STATE_WORD[s.state])}${s.endReason ? ` (${esc(s.endReason)})` : ''}</dd>
     <dt>directory</dt><dd>${esc(s.cwd)}</dd>
     ${s.repo?.remote ? `<dt>remote</dt><dd>${esc(s.repo.remote)}</dd>` : ''}
@@ -693,7 +711,7 @@ function drawerHtml(s) {
   if (s.memory) {
     const m = s.memory
     const trend = memTrend(m)
-    out.push(`<h4>Memory</h4><dl class="kv">
+    out.push(`<h3>Memory</h3><dl class="kv">
       <dt>claude.exe</dt><dd>${mb(m.mb)} · ${mb(m.wsMb)} in RAM · PID ${m.pid}</dd>
       ${trend ? `<dt>trend</dt><dd>${esc(trend)}</dd>` : ''}
       ${m.children.map((c) => `<dt>${esc(c.label)}</dt><dd>${mb(c.mb)}${c.procs > 1 ? ` · ${c.procs} processes` : ''}</dd>`).join('')}
@@ -701,27 +719,35 @@ function drawerHtml(s) {
     </dl>`)
   }
 
-  if (s.waiting) out.push(`<h4>Waiting for you</h4><div class="ask"><b>${esc(s.waiting.kind)}</b> · ${live(s.waiting.since)}<div class="d">${esc(s.waiting.detail)}</div></div>`)
-  if (s.prompt) out.push(`<h4>Last prompt</h4><div class="quote">${esc(s.prompt)}</div>`)
-  if (s.skill) out.push(`<h4>Skill</h4><dl class="kv"><dt>skill</dt><dd>${esc(s.skill.name)}</dd>${s.skill.args ? `<dt>args</dt><dd>${esc(s.skill.args)}</dd>` : ''}${s.workItem ? `<dt>work item</dt><dd>#${esc(s.workItem)}</dd>` : ''}</dl>`)
+  const crons = cronsOf(s)
+  if (crons.length) {
+    out.push(`<h3>Scheduled</h3><table class="ag">${crons.map((c) => `
+      <tr><td class="ty" title="${esc(c.cron)}">${esc(c.human)}${c.recurring ? '' : ' (once)'}</td>
+        <td>${esc(c.prompt)}${c.firedAt ? `<div class="lt">last fired ${esc(clock(c.firedAt))}</div>` : ''}</td>
+        <td class="st">${c.nextAt ? `${esc(day(c.nextAt))} · ${countdown(c.nextAt, 'in ', 'due')}` : 'no next time'}</td></tr>`).join('')}</table>`)
+  }
+
+  if (s.waiting) out.push(`<h3>Waiting for you</h3><div class="ask"><b>${esc(s.waiting.kind)}</b> · ${live(s.waiting.since)}<div class="d">${esc(s.waiting.detail)}</div></div>`)
+  if (s.prompt) out.push(`<h3>Last prompt</h3><div class="quote">${esc(s.prompt)}</div>`)
+  if (s.skill) out.push(`<h3>Skill</h3><dl class="kv"><dt>skill</dt><dd>${esc(s.skill.name)}</dd>${s.skill.args ? `<dt>args</dt><dd>${esc(s.skill.args)}</dd>` : ''}${s.workItem ? `<dt>work item</dt><dd>#${esc(s.workItem)}</dd>` : ''}</dl>`)
 
   if (s.prs?.length) {
-    out.push(`<h4>Pull requests</h4><dl class="kv pr-list">${[...s.prs].reverse().map((p) => `
+    out.push(`<h3>Pull requests</h3><dl class="kv pr-list">${[...s.prs].reverse().map((p) => `
       <dt>${esc(prName(p))}</dt><dd><a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.repo)}</a> · ${clock(p.at)}</dd>`).join('')}</dl>`)
   }
 
   if (s.tools.length) {
-    out.push(`<h4>Running now</h4><div class="activity">${s.tools.map((t) => `
+    out.push(`<h3>Running now</h3><div class="activity">${s.tools.map((t) => `
       <div class="act"><span class="what">${esc(t.tool)}${t.summary ? ` · ${esc(t.summary)}` : ''}</span><span class="t">${live(t.since)}</span></div>`).join('')}</div>`)
   }
   if (s.agents.length) {
-    out.push(`<h4>Agents</h4><table class="ag">${[...s.agents].reverse().map((a) => `
+    out.push(`<h3>Agents</h3><table class="ag">${[...s.agents].reverse().map((a) => `
       <tr><td class="ty">${esc(a.type)}</td>
         <td>${esc(a.description)}${a.lastTool ? `<div class="lt">${esc(a.lastTool)}</div>` : ''}</td>
         <td class="st" style="color:${a.status === 'done' ? 'var(--ok)' : a.status === 'failed' ? 'var(--you)' : 'var(--bg-agent)'}">
           ${esc(a.status)} ${a.endedAt ? dur(a.endedAt - a.since) : live(a.since)}</td></tr>`).join('')}</table>`)
   }
-  out.push(`<h4>Timeline</h4><div class="timeline">${[...s.events].reverse().map((e) => `
+  out.push(`<h3>Timeline</h3><div class="timeline">${[...s.events].reverse().map((e) => `
     <div class="ev ${e.kind}"><span class="tm">${clock(e.t)}</span><span class="k">${esc(e.kind)}</span>
       <span class="tx">${e.agent ? `<span class="ag">${esc(e.agent)}</span>` : ''}${esc(e.text)}</span></div>`).join('')}</div>`)
   return out.join('')

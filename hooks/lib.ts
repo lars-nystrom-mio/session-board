@@ -79,6 +79,23 @@ export type Board = {
   cache?: { at: number; ttl: CacheTtl | null } | null
   // The session's claude.exe and what it started, sampled once a minute (Windows only).
   memory?: SessionMemory | null
+  // Jobs that will wake this session: CronCreate, /loop and ScheduleWakeup.
+  crons?: CronRec[]
+}
+
+// A scheduled job. `cron` is '' for a ScheduleWakeup, which fires once at `nextAt`.
+export type CronRec = {
+  id: string
+  cron: string
+  human: string
+  prompt: string
+  recurring: boolean
+  createdAt: number
+  // When it fires next (null: the expression never matches again).
+  nextAt: number | null
+  // The scheduler's per-job offset from the cron match, kept for later firings.
+  offsetMs: number
+  firedAt?: number
 }
 
 export type CacheTtl = '5m' | '1h'
@@ -436,6 +453,180 @@ export function memoryOf(probe: ProbeResult, at: number, previous: SessionMemory
   }
 }
 
+export const WAKEUP_ID = 'wakeup'
+export const CRON_EXPIRY_MS = 7 * 24 * 3600_000 // the scheduler expires a recurring job after 7 days
+const CRON_LATE_MS = 3600_000 // a one-shot this far past due without a firing seen is dropped
+const FIRE_SLACK_MS = 90_000 // a turn this soon before a job's time can still be its firing
+
+// The values one cron field allows, or null when it doesn't parse.
+function cronField(field: string, min: number, max: number): Set<number> | null {
+  const values = new Set<number>()
+  for (const part of field.split(',')) {
+    const m = part.match(/^(\*|(\d+)(?:-(\d+))?)(?:\/(\d+))?$/)
+    if (!m) return null
+    const step = m[4] ? Number(m[4]) : 1
+    let lo = m[1] === '*' ? min : Number(m[2])
+    let hi = m[1] === '*' ? max : m[3] !== undefined ? Number(m[3]) : m[4] ? max : lo
+    if (step < 1 || lo < min || hi > max || lo > hi) return null
+    for (; lo <= hi; lo += step) values.add(lo)
+  }
+  return values
+}
+
+// The first minute after `after` that a 5-field cron expression matches, in
+// local time; null when it doesn't parse or matches nothing within a year.
+// Day of month and day of week both restricted means either may match.
+export function nextCronMatch(cron: string, after: number): number | null {
+  const f = cron.trim().split(/\s+/)
+  if (f.length !== 5) return null
+  const minute = cronField(f[0] ?? '', 0, 59)
+  const hour = cronField(f[1] ?? '', 0, 23)
+  const dom = cronField(f[2] ?? '', 1, 31)
+  const month = cronField(f[3] ?? '', 1, 12)
+  const dow = cronField(f[4] ?? '', 0, 7)
+  if (!minute || !hour || !dom || !month || !dow) return null
+  if (dow.has(7)) dow.add(0)
+  const anyDom = f[2] === '*'
+  const anyDow = f[4] === '*'
+  const t = new Date(after)
+  t.setSeconds(0, 0)
+  t.setMinutes(t.getMinutes() + 1)
+  const end = after + 366 * 24 * 3600_000
+  while (t.getTime() <= end) {
+    const dayOk = anyDom || anyDow ? dom.has(t.getDate()) && dow.has(t.getDay()) : dom.has(t.getDate()) || dow.has(t.getDay())
+    if (!month.has(t.getMonth() + 1) || !dayOk) {
+      t.setHours(24, 0, 0, 0)
+    } else if (!hour.has(t.getHours())) {
+      t.setHours(t.getHours() + 1, 0, 0, 0)
+    } else if (!minute.has(t.getMinutes())) {
+      t.setMinutes(t.getMinutes() + 1)
+    } else {
+      return t.getTime()
+    }
+  }
+  return null
+}
+
+// The last match at or before `t`, looking back a day from `from`: the match
+// the scheduler offset to get `t`, which can be later than the next match after `from`.
+function matchBefore(cron: string, t: number, from: number): number | null {
+  let last: number | null = null
+  let m = nextCronMatch(cron, Math.min(from, t) - 24 * 3600_000)
+  for (let i = 0; m !== null && m <= t && i < 3000; i++) {
+    last = m
+    m = nextCronMatch(cron, m)
+  }
+  return last
+}
+
+const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+const str = (v: unknown): string => (typeof v === 'string' ? v : '')
+
+function putCron(board: Board, rec: CronRec) {
+  board.crons = [...(board.crons ?? []).filter((c) => c.id !== rec.id), rec]
+}
+
+// A job as the board keeps it, from CronCreate's input and result or a CronList entry.
+function cronRec(id: string, cron: string, human: string, prompt: string, recurring: boolean, nextFireAt: number | null, now: number, previous?: CronRec): CronRec {
+  const match = nextFireAt !== null ? matchBefore(cron, nextFireAt, now) : nextCronMatch(cron, now - (previous?.offsetMs ?? 0))
+  const nextAt = nextFireAt ?? (match !== null ? match + (previous?.offsetMs ?? 0) : null)
+  return {
+    id,
+    cron,
+    human: clip(human || cron, 80),
+    prompt: clip(prompt, 300),
+    recurring,
+    createdAt: previous?.createdAt ?? now,
+    nextAt,
+    offsetMs: nextFireAt !== null && match !== null ? nextFireAt - match : (previous?.offsetMs ?? 0),
+    firedAt: previous?.firedAt,
+  }
+}
+
+// Updates the board's jobs from a finished CronCreate, CronDelete, CronList or
+// ScheduleWakeup call. Returns a line for the timeline, or null when the call
+// wasn't one of these or its result had nothing to go on.
+export function cronToolDone(board: Board, tool: string, input: Record<string, unknown>, result: unknown, now: number): string | null {
+  const r = (result && typeof result === 'object' ? result : {}) as Record<string, unknown>
+  switch (tool) {
+    case 'CronCreate': {
+      const id = str(r.id)
+      if (!id) return null
+      const recurring = typeof r.recurring === 'boolean' ? r.recurring : input.recurring !== false
+      const rec = cronRec(id, str(input.cron), str(r.humanSchedule), str(input.prompt), recurring, num(r.nextFireAt), now)
+      putCron(board, rec)
+      return `scheduled ${rec.human}`
+    }
+    case 'CronDelete': {
+      const id = str(r.id) || str(input.id)
+      const before = board.crons?.length ?? 0
+      board.crons = (board.crons ?? []).filter((c) => c.id !== id)
+      return board.crons.length < before ? `unscheduled ${id}` : null
+    }
+    case 'CronList': {
+      if (!Array.isArray(r.jobs)) return null
+      const old = new Map((board.crons ?? []).map((c) => [c.id, c]))
+      const listed = (r.jobs as Record<string, unknown>[]).filter((j) => str(j.id)).map((j) =>
+        cronRec(str(j.id), str(j.cron), str(j.humanSchedule), str(j.prompt), j.recurring !== false, num(j.nextFireAt), now, old.get(str(j.id))))
+      board.crons = [...(board.crons ?? []).filter((c) => c.id === WAKEUP_ID && !listed.some((j) => j.id === WAKEUP_ID)), ...listed]
+      return null
+    }
+    case 'ScheduleWakeup': {
+      const at = num(r.scheduledFor)
+      board.crons = (board.crons ?? []).filter((c) => c.id !== WAKEUP_ID)
+      if (r.stopped === true || at === null) return null
+      const prompt = str(input.prompt)
+      putCron(board, {
+        id: WAKEUP_ID,
+        cron: '',
+        human: 'wakeup',
+        prompt: clip(/^<<autonomous-loop/.test(prompt) ? '/loop (autonomous)' : prompt, 300),
+        recurring: false,
+        createdAt: now,
+        nextAt: at,
+        offsetMs: 0,
+      })
+      return null
+    }
+    default:
+      return null
+  }
+}
+
+// A main turn started: if it's a job firing, a one-shot is done and a
+// recurring one moves on to its next match. A job is recognised by its prompt,
+// a wakeup by its time having come, since its prompt may be a sentinel.
+export function cronFired(board: Board, text: string, now: number): CronRec | null {
+  const prompt = clip(text, 300)
+  const fired = (board.crons ?? []).find((c) =>
+    c.nextAt !== null && (c.id === WAKEUP_ID ? c.nextAt <= now + 5_000 : c.nextAt <= now + FIRE_SLACK_MS && prompt !== '' && c.prompt === prompt))
+  if (!fired) return null
+  if (fired.recurring) {
+    const match = nextCronMatch(fired.cron, Math.max(now, fired.nextAt ?? now) - fired.offsetMs)
+    fired.nextAt = match !== null ? match + fired.offsetMs : null
+    fired.firedAt = now
+  } else {
+    board.crons = (board.crons ?? []).filter((c) => c !== fired)
+  }
+  return fired
+}
+
+// Drops jobs the scheduler has dropped by now, and moves a recurring job past
+// a firing that went unseen (it may have fired into a busy turn).
+export function pruneCrons(board: Board, now: number): void {
+  if (!board.crons?.length) return
+  board.crons = board.crons.filter((c) => {
+    if (c.recurring) return c.createdAt + CRON_EXPIRY_MS > now
+    return c.nextAt === null || c.nextAt + CRON_LATE_MS > now
+  })
+  for (const c of board.crons) {
+    if (c.recurring && c.nextAt !== null && c.nextAt + FIRE_SLACK_MS < now) {
+      const match = nextCronMatch(c.cron, now - c.offsetMs)
+      c.nextAt = match !== null ? match + c.offsetMs : null
+    }
+  }
+}
+
 export function pushEvent(board: Board, event: BoardEvent): void {
   board.events.push(event)
   if (board.events.length > MAX_EVENTS) board.events.splice(0, board.events.length - MAX_EVENTS)
@@ -501,5 +692,6 @@ export function freshBoard(sessionId: string, cwd: string, now: number): Board {
     costUsd: null,
     cache: null,
     memory: null,
+    crons: [],
   }
 }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'claude-code/testing'
-import { addPrs, adoOrgOf, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, childLabel, deriveState, freshBoard, memoryOf, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, summarize, toolLabel, trimAgents, workItemOf, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
+import { addPrs, adoOrgOf, cronFired, cronToolDone, nextCronMatch, pruneCrons, CRON_EXPIRY_MS, WAKEUP_ID, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, childLabel, deriveState, freshBoard, memoryOf, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, summarize, toolLabel, trimAgents, workItemOf, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
 
 describe('summaries', () => {
   test('a tool call becomes one short line', async () => {
@@ -228,5 +228,98 @@ describe('memory', () => {
     expect(parseProbe('{"root":5,"procs":{"pid":5,"ppid":1,"name":"claude.exe","cmd":"","mb":1,"wsMb":1}}\r\n')?.procs.length).toBe(1)
     expect(parseProbe('{}')).toBe(null)
     expect(parseProbe('Get-CimInstance : access denied')).toBe(null)
+  })
+})
+
+describe('scheduled jobs', () => {
+  // Local time, as the scheduler reads cron expressions.
+  const at = (d: number, h: number, m: number, s = 0) => new Date(2026, 9, d, h, m, s).getTime()
+
+  test('the next match of a cron expression', async () => {
+    expect(nextCronMatch('7 7-19 23 10 *', at(23, 0, 32))).toBe(at(23, 7, 7))
+    expect(nextCronMatch('7 7-19 23 10 *', at(23, 7, 7))).toBe(at(23, 8, 7))
+    expect(nextCronMatch('7 7-19 23 10 *', at(23, 19, 7))).toBe(new Date(2027, 9, 23, 7, 7).getTime())
+    expect(nextCronMatch('0 0 30 2 *', 0)).toBe(null) // never matches
+    expect(nextCronMatch('*/15 * * * *', at(23, 10, 1))).toBe(at(23, 10, 15))
+    expect(nextCronMatch('0 9 * * 1-5', at(23, 10, 0))).toBe(at(26, 9, 0)) // Fri 23 Oct -> Mon 26
+    expect(nextCronMatch('30 14 28 2 *', at(23, 0, 0))).toBe(new Date(2027, 1, 28, 14, 30).getTime())
+    expect(nextCronMatch('0 0 1 * 0', at(23, 0, 0))).toBe(at(25, 0, 0)) // day of month or Sunday
+    expect(nextCronMatch('bad', 0)).toBe(null)
+    expect(nextCronMatch('61 * * * *', 0)).toBe(null)
+  })
+
+  test('CronCreate, CronList and CronDelete keep the board in step', async () => {
+    const board = freshBoard('s1', '/x', 0)
+    const created = at(23, 0, 32)
+    const line = cronToolDone(board, 'CronCreate', { cron: '7 7-19 23 10 *', prompt: '/drift-day hourly', recurring: true },
+      { id: 'a4bc5d55', humanSchedule: 'at :07 from 7 to 19 on Oct 23', recurring: true, nextFireAt: at(23, 7, 7, 20) }, created)
+    expect(line).toBe('scheduled at :07 from 7 to 19 on Oct 23')
+    expect(board.crons?.[0]).toMatchObject({ id: 'a4bc5d55', nextAt: at(23, 7, 7, 20), offsetMs: 20_000, recurring: true, createdAt: created })
+
+    cronToolDone(board, 'CronCreate', { cron: '13 20 23 10 *', prompt: '/drift-day summary', recurring: false },
+      { id: 'b1', humanSchedule: 'Oct 23 20:13', recurring: false, nextFireAt: at(23, 20, 13) }, created)
+    expect(board.crons?.length).toBe(2)
+
+    // A listing replaces the jobs and keeps what only the board knew.
+    cronToolDone(board, 'CronList', {}, { jobs: [{ id: 'a4bc5d55', cron: '7 7-19 23 10 *', humanSchedule: 'hourly', prompt: '/drift-day hourly', nextFireAt: at(23, 7, 7, 20) }] }, at(23, 1, 0))
+    expect(board.crons?.map((c) => c.id)).toEqual(['a4bc5d55'])
+    expect(board.crons?.[0]?.createdAt).toBe(created)
+
+    expect(cronToolDone(board, 'CronDelete', { id: 'a4bc5d55' }, { id: 'a4bc5d55' }, at(23, 2, 0))).toBe('unscheduled a4bc5d55')
+    expect(board.crons).toEqual([])
+    expect(cronToolDone(board, 'Bash', {}, {}, 0)).toBe(null)
+  })
+
+  test('the offset is measured from the match it shifted, even past the next one', async () => {
+    const board = freshBoard('s1', '/x', 0)
+    // Created at 09:45 for 09:30 daily, shifted half an hour: today's match fires at 10:00.
+    cronToolDone(board, 'CronCreate', { cron: '30 9 * * *', prompt: 'hello' }, { id: 'd', recurring: true, nextFireAt: at(23, 10, 0) }, at(23, 9, 45))
+    expect(board.crons?.[0]).toMatchObject({ nextAt: at(23, 10, 0), offsetMs: 30 * 60_000 })
+    cronFired(board, 'hello', at(23, 10, 0, 1))
+    expect(board.crons?.[0]?.nextAt).toBe(at(24, 10, 0))
+  })
+
+  test('a firing moves a recurring job on and drops a one-shot', async () => {
+    const board = freshBoard('s1', '/x', 0)
+    cronToolDone(board, 'CronCreate', { cron: '7 7-19 23 10 *', prompt: '/drift-day hourly' }, { id: 'h', recurring: true, nextFireAt: at(23, 7, 7, 20) }, at(23, 0, 32))
+    cronToolDone(board, 'CronCreate', { cron: '13 20 23 10 *', prompt: '/drift-day summary', recurring: false }, { id: 'o', recurring: false, nextFireAt: at(23, 20, 13) }, at(23, 0, 32))
+
+    expect(cronFired(board, 'something else', at(23, 7, 7, 21))).toBe(null)
+    expect(cronFired(board, '/drift-day hourly', at(23, 7, 7, 21))?.id).toBe('h')
+    expect(board.crons?.find((c) => c.id === 'h')?.nextAt).toBe(at(23, 8, 7, 20))
+    expect(cronFired(board, '/drift-day hourly', at(23, 19, 7, 21))?.id).toBe('h')
+    expect(board.crons?.find((c) => c.id === 'h')?.nextAt).toBe(new Date(2027, 9, 23, 7, 7, 20).getTime())
+
+    expect(cronFired(board, '/drift-day summary', at(23, 20, 13, 1))?.id).toBe('o')
+    expect(board.crons?.map((c) => c.id)).toEqual(['h'])
+  })
+
+  test('a wakeup fires once, whatever its prompt', async () => {
+    const board = freshBoard('s1', '/x', 0)
+    cronToolDone(board, 'ScheduleWakeup', { delaySeconds: 1200, prompt: '<<autonomous-loop-dynamic>>' }, { scheduledFor: at(23, 10, 20) }, at(23, 10, 0))
+    expect(board.crons?.[0]).toMatchObject({ id: WAKEUP_ID, prompt: '/loop (autonomous)', nextAt: at(23, 10, 20) })
+    expect(cronFired(board, 'a prompt typed earlier', at(23, 10, 5))).toBe(null)
+    expect(cronFired(board, 'the loop instructions', at(23, 10, 20, 1))?.id).toBe(WAKEUP_ID)
+    expect(board.crons).toEqual([])
+
+    cronToolDone(board, 'ScheduleWakeup', { delaySeconds: 60, prompt: 'x' }, { scheduledFor: at(23, 11, 0) }, at(23, 10, 59))
+    cronToolDone(board, 'ScheduleWakeup', {}, { scheduledFor: 0, stopped: true }, at(23, 10, 59))
+    expect(board.crons).toEqual([])
+  })
+
+  test('jobs the scheduler dropped leave the board', async () => {
+    const board = freshBoard('s1', '/x', 0)
+    const created = at(1, 9, 0)
+    cronToolDone(board, 'CronCreate', { cron: '0 * * * *', prompt: 'hourly' }, { id: 'h', recurring: true, nextFireAt: at(1, 10, 0) }, created)
+    cronToolDone(board, 'CronCreate', { cron: '0 12 1 10 *', prompt: 'once', recurring: false }, { id: 'o', recurring: false, nextFireAt: at(1, 12, 0) }, created)
+
+    // A firing the board didn't see moves the job on.
+    pruneCrons(board, at(1, 12, 30))
+    expect(board.crons?.find((c) => c.id === 'h')?.nextAt).toBe(at(1, 13, 0))
+    expect(board.crons?.length).toBe(2)
+    pruneCrons(board, at(1, 13, 1))
+    expect(board.crons?.map((c) => c.id)).toEqual(['h'])
+    pruneCrons(board, created + CRON_EXPIRY_MS)
+    expect(board.crons).toEqual([])
   })
 })
