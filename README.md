@@ -60,8 +60,9 @@ On Windows, serve the page with the bundled server instead, from this repo:
 python server\serve.py
 ```
 
-It serves the same folder on the same port, and adds a **deliver** form to the
-header: pick a project, type a work item number, and it opens
+Stop `python -m http.server` first: both use port 8765. It serves the same
+folder, except that the page itself comes from the repo, so an edit shows on the
+next reload. It adds a **deliver** form to the header: pick a project, type a work item number, and it opens
 `claude "deliver 1234"` in that folder in a new Windows Terminal tab (a new
 console window without Windows Terminal). The session shows up as a tile like
 any other. Change what it's started with using `--prompt "/my-skill {id}"`;

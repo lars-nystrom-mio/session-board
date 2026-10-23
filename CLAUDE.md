@@ -21,7 +21,9 @@ install it and how to serve the page. This file is for working on it.
   keys tiles by session id so CSS animations survive polls. It shows the
   **deliver** form only when `GET api/launch` answers, so it still works under
   `python -m http.server`.
-- `server/serve.py`: optional stdlib server for the board folder. It adds
+- `server/serve.py`: optional stdlib server for the board folder, but `/`
+  comes from `dashboard/index.html` in the repo. It turns off `SO_REUSEADDR` on
+  Windows, where it would let it bind a port another server holds. It adds
   `api/launch`, which opens an interactive `claude "<prompt>"` for a work item in
   a folder that some status file reports. It takes no free text, checks `Host`,
   `Origin` and the JSON content type, and never answers CORS preflights.

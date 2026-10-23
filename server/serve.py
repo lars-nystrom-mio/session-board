@@ -27,6 +27,15 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 WORK_ITEM = re.compile(r"^\d{1,9}$")
+# The page from this repo rather than the board folder's copy, which a session
+# only refreshes when it starts.
+PAGE = Path(__file__).resolve().parent.parent / "dashboard" / "index.html"
+
+
+class Server(ThreadingHTTPServer):
+    # On Windows SO_REUSEADDR lets a second server bind a port already in use and
+    # never see a request; without it, a busy port fails at startup.
+    allow_reuse_address = os.name != "nt"
 
 
 def default_board_dir() -> Path:
@@ -131,8 +140,17 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        if self.path.split("?")[0] == "/api/launch":
+        path = self.path.split("?")[0]
+        if path == "/api/launch":
             return self.send_json(200, {"prompt": self.prompt, "projects": known_projects(self.board)})
+        if path in ("/", "/index.html") and PAGE.is_file():
+            body = PAGE.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            return self.wfile.write(body)
         super().do_GET()
 
     def do_POST(self):
@@ -168,7 +186,11 @@ def main() -> None:
     board = args.dir.resolve()
     board.mkdir(parents=True, exist_ok=True)
     handler = type("BoardHandler", (Handler,), {"board": board, "prompt": args.prompt, "port": args.port})
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), partial(handler, directory=str(board)))
+    try:
+        server = Server(("127.0.0.1", args.port), partial(handler, directory=str(board)))
+    except OSError as e:
+        sys.exit(f"Can't listen on 127.0.0.1:{args.port} ({e.strerror}). Is another server, "
+                 f"such as python -m http.server, still running on it?")
     print(f"Serving {board} at http://127.0.0.1:{args.port}/", flush=True)
     try:
         server.serve_forever()
