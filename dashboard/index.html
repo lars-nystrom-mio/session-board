@@ -43,7 +43,8 @@
   .summary .bg b { color: var(--bg-agent); }
   .summary .zero { color: var(--faint); }
   .summary .zero b { color: inherit; }
-  .sort { margin-left: auto; display: flex; align-items: baseline; gap: 2px; font-family: var(--mono); font-size: 12px; color: var(--faint); }
+  .view { margin-left: auto; display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  .sort { display: flex; align-items: baseline; gap: 2px; font-family: var(--mono); font-size: 12px; color: var(--faint); }
   .sort span { margin-right: 6px; }
   .sort button { background: none; border: 1px solid transparent; border-radius: 6px; padding: 1px 7px; cursor: pointer; color: var(--muted); }
   .sort button:hover { color: var(--text); }
@@ -100,6 +101,38 @@
     display: grid; gap: 14px; align-items: start;
     grid-template-columns: repeat(auto-fill, minmax(min(330px, 100%), 1fr));
   }
+  /* Groups: a header over each project's or work item's tiles. Grouping "none"
+     is one section with its header hidden. */
+  .group + .group { margin-top: 26px; }
+  .group.collapsed + .group, .group + .group.collapsed { margin-top: 10px; }
+  .g-head {
+    display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; width: 100%; margin-bottom: 12px;
+    padding: 4px 4px 7px; background: none; border: 0; border-bottom: 1px solid var(--line); border-radius: 6px 6px 0 0;
+    text-align: left; cursor: pointer; color: var(--muted);
+  }
+  .g-head[hidden] { display: none; }
+  .g-head:hover { color: var(--text); }
+  .g-head:focus-visible { outline: 2px solid var(--run); outline-offset: 1px; }
+  .collapsed .g-head { margin-bottom: 0; }
+  .g-head .chev {
+    width: 10px; height: 10px; flex: none; align-self: center; color: var(--faint);
+    transform: rotate(90deg); transition: transform .15s ease-out;
+  }
+  .collapsed .g-head .chev { transform: none; }
+  .g-head:hover .chev { color: var(--text); }
+  .chev path { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .g-name { font-weight: 600; font-size: 13px; color: var(--text); min-width: 0; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .g-extra { font-family: var(--mono); font-size: 11px; color: var(--faint); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .g-count { font-family: var(--mono); font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; }
+  .g-head .summary { margin-left: auto; }
+  /* A collapsed group hides its tiles, so it carries their alert instead. */
+  .g-dot { display: none; width: 7px; height: 7px; border-radius: 50%; flex: none; align-self: center; background: var(--you); }
+  .collapsed.you .g-dot { display: block; animation: pulse .9s ease-in-out infinite; }
+  .collapsed.you .g-head {
+    border-bottom-color: var(--you);
+    background: linear-gradient(to top, color-mix(in srgb, var(--you) 9%, transparent), transparent);
+  }
+  .group .grid[hidden] { display: none; }
   .empty-all { color: var(--faint); padding: 40px 0; text-align: center; }
   .empty-all code { font-family: var(--mono); color: var(--muted); }
 
@@ -296,7 +329,7 @@
 
   @media (max-width: 640px) {
     header { padding: 20px 16px 4px; }
-    .sort { margin-left: 0; }
+    .view { margin-left: 0; }
     .status { margin-left: auto; }
     main { padding: 14px 16px 32px; }
     .grid { grid-template-columns: minmax(0, 1fr); }
@@ -323,17 +356,25 @@
     <button id="launch-go">queue</button>
     <output id="launch-out" aria-live="polite"></output>
   </form>
-  <div class="sort" role="group" aria-label="Sort sessions">
-    <span>sort</span>
-    <button data-sort="started" aria-pressed="true">started</button>
-    <button data-sort="project" aria-pressed="false">project</button>
-    <button data-sort="waiting" aria-pressed="false">needs you first</button>
+  <div class="view">
+    <div class="sort" role="group" aria-label="Group sessions">
+      <span>group</span>
+      <button data-group-by="none" aria-pressed="true">none</button>
+      <button data-group-by="project" aria-pressed="false">project</button>
+      <button data-group-by="workItem" aria-pressed="false">work item</button>
+    </div>
+    <div class="sort" role="group" aria-label="Sort sessions">
+      <span>sort</span>
+      <button data-sort="started" aria-pressed="true">started</button>
+      <button data-sort="project" aria-pressed="false">project</button>
+      <button data-sort="waiting" aria-pressed="false">needs you first</button>
+    </div>
   </div>
   <div class="status" id="status">connecting…</div>
 </header>
 <main>
   <section class="queue" id="queue" aria-label="Queue" hidden></section>
-  <div class="grid" id="grid"></div>
+  <div id="groups"></div>
   <div id="empty"></div>
   <details class="past" id="past" hidden>
     <summary id="past-summary"></summary>
@@ -385,6 +426,13 @@ const quietCache = new Map()
 const tiles = new Map()        // sessionId -> { el, html, lastEvent }
 let sortBy = 'started'
 try { sortBy = localStorage.getItem('sessionBoard.sort') || sortBy } catch {}
+let groupBy = 'none'
+try { groupBy = localStorage.getItem('sessionBoard.group') || groupBy } catch {}
+// "<groupBy>:<key>" -> true for each group you collapsed, so it stays collapsed
+// while its sessions come and go.
+let collapsed = {}
+try { collapsed = JSON.parse(localStorage.getItem('sessionBoard.collapsed') || '{}') || {} } catch {}
+const sections = new Map()     // "<groupBy>:<key>" -> { el, head, grid, html }
 let openId = null
 let openHtml = ''
 
@@ -613,6 +661,60 @@ function tileHtml(s) {
   return parts.join('')
 }
 
+// ---- Groups ---------------------------------------------------------------
+
+const STATE_BITS = [['waiting', 'you', 'need you'], ['running', 'run', 'running'], ['background', 'bg', 'background'], ['idle', '', 'idle']]
+const countIn = (list, st) => list.filter((s) => s.state === st).length
+const byName = (a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' })
+
+// The sessions split into groups, each still in sort order. Groups are ordered
+// by name, never by activity, so they keep their places between polls.
+function groupsOf(active) {
+  if (groupBy === 'none') return [{ key: '', list: active }]
+  const keyOf = groupBy === 'workItem' ? (s) => s.workItem || '' : projectOf
+  const byKey = new Map()
+  for (const s of active) {
+    const k = keyOf(s)
+    if (!byKey.has(k)) byKey.set(k, [])
+    byKey.get(k).push(s)
+  }
+  const groups = [...byKey].map(([key, list]) => ({ key, list }))
+  if (groupBy === 'workItem') {
+    // Work items by number; sessions without one last.
+    return groups.sort((a, b) => (!a.key) - (!b.key) || Number(a.key) - Number(b.key) || byName(a.key, b.key))
+  }
+  return groups.sort((a, b) => byName(a.key, b.key))
+}
+
+function groupHeadHtml(g) {
+  const name = groupBy === 'workItem' ? (g.key ? `#${g.key}` : 'No work item') : g.key
+  // A work item's projects, since one can span several repos.
+  const extra = groupBy === 'workItem' ? [...new Set(g.list.map(projectOf))].sort(byName).join(', ') : ''
+  const bits = STATE_BITS.map(([st, c, w]) => {
+    const n = countIn(g.list, st)
+    return n ? `<span class="${c}"><b>${n}</b> ${st === 'waiting' && n === 1 ? 'needs you' : w}</span>` : ''
+  }).join('')
+  return `<svg class="chev" viewBox="0 0 10 10" aria-hidden="true"><path d="M3.5 2 6.5 5 3.5 8"/></svg>
+    <span class="g-dot"></span>
+    <span class="g-name" title="${esc(name)}">${esc(name)}</span>
+    ${extra ? `<span class="g-extra">${esc(extra)}</span>` : ''}
+    <span class="g-count">${g.list.length}</span>
+    <span class="summary">${bits}</span>`
+}
+
+function setGroup(by) {
+  groupBy = by
+  try { localStorage.setItem('sessionBoard.group', by) } catch {}
+  markSort()
+  render()
+}
+function toggleGroup(id) {
+  if (collapsed[id]) delete collapsed[id]
+  else collapsed[id] = true
+  try { localStorage.setItem('sessionBoard.collapsed', JSON.stringify(collapsed)) } catch {}
+  render()
+}
+
 function render() {
   const now = Date.now()
   const active = sessions.filter((s) => s.state !== 'ended' && !isStale(s))
@@ -623,32 +725,55 @@ function render() {
   const byStart = (a, b) => a.startedAt - b.startedAt || (a.sessionId < b.sessionId ? -1 : 1)
   const sorts = {
     started: byStart,
-    project: (a, b) => projectOf(a).localeCompare(projectOf(b), undefined, { sensitivity: 'base' }) || byStart(a, b),
+    project: (a, b) => byName(projectOf(a), projectOf(b)) || byStart(a, b),
     // Moves a tile only when a session starts or stops needing you.
     waiting: (a, b) => (b.state === 'waiting') - (a.state === 'waiting') || byStart(a, b),
   }
   active.sort(sorts[sortBy] || byStart)
 
   // Summary: always all four counts, so the header doesn't shift either.
-  const count = (st) => active.filter((s) => s.state === st).length
-  const bits = [
-    ['you', count('waiting'), 'need you'],
-    ['run', count('running'), 'running'],
-    ['bg', count('background'), 'background'],
-    ['', count('idle'), 'idle'],
-  ]
-  document.title = count('waiting') ? `(${count('waiting')}) Session Board` : 'Session Board'
-  setFavicon(count('waiting') ? 'waiting' : 'ok')
+  const waiting = countIn(active, 'waiting')
+  document.title = waiting ? `(${waiting}) Session Board` : 'Session Board'
+  setFavicon(waiting ? 'waiting' : 'ok')
   // A background tab keeps its alert (title and favicon) and skips the rest.
   if (document.hidden) return
-  const summary = bits.map(([c, n, w]) => `<span class="${c}${n ? '' : ' zero'}"><b>${n}</b> ${w}</span>`).join('')
+  const summary = STATE_BITS.map(([st, c, w]) => {
+    const n = countIn(active, st)
+    return `<span class="${c}${n ? '' : ' zero'}"><b>${n}</b> ${w}</span>`
+  }).join('')
   if ($('summary').dataset.html !== summary) { $('summary').innerHTML = summary; $('summary').dataset.html = summary }
 
+  // Groups, keyed like tiles so polls never rebuild them. Tiles are placed first
+  // and unused sections removed after, so a tile that changes group just moves.
+  const groups = groupsOf(active)
+  const container = $('groups')
+  groups.forEach((g, i) => {
+    const id = `${groupBy}:${g.key}`
+    let sec = sections.get(id)
+    if (!sec) {
+      const el = document.createElement('section')
+      el.className = 'group'
+      el.innerHTML = '<button class="g-head"></button><div class="grid"></div>'
+      sec = { el, head: el.firstChild, grid: el.lastChild, html: '' }
+      sec.head.dataset.groupToggle = id
+      sections.set(id, sec)
+    }
+    const isCollapsed = groupBy !== 'none' && !!collapsed[id]
+    sec.el.classList.toggle('collapsed', isCollapsed)
+    sec.el.classList.toggle('you', countIn(g.list, 'waiting') > 0)
+    sec.head.hidden = groupBy === 'none'
+    sec.head.setAttribute('aria-expanded', String(!isCollapsed))
+    sec.grid.hidden = isCollapsed
+    const html = groupBy === 'none' ? '' : groupHeadHtml(g)
+    if (html !== sec.html) { sec.head.innerHTML = html; sec.html = html }
+    if (container.children[i] !== sec.el) container.insertBefore(sec.el, container.children[i] || null)
+  })
+
   // Tiles, keyed so animations survive polls
-  const grid = $('grid')
   const keep = new Set(active.map((s) => s.sessionId))
   for (const [id, t] of tiles) if (!keep.has(id)) { t.el.remove(); tiles.delete(id) }
-  active.forEach((s, i) => {
+  for (const g of groups) g.list.forEach((s, i) => {
+    const grid = sections.get(`${groupBy}:${g.key}`).grid
     let t = tiles.get(s.sessionId)
     if (!t) {
       const el = document.createElement('button')
@@ -667,6 +792,8 @@ function render() {
     t.lastEvent = lastEvent
     if (grid.children[i] !== t.el) grid.insertBefore(t.el, grid.children[i] || null)
   })
+  const used = new Set(groups.map((g) => `${groupBy}:${g.key}`))
+  for (const [id, sec] of sections) if (!used.has(id)) { sec.el.remove(); sections.delete(id) }
 
   $('empty').innerHTML = active.length ? '' : `<div class="empty-all">No live sessions. Start <code>claude</code> anywhere with the session-board plugin loaded.</div>`
 
@@ -713,6 +840,7 @@ function setSort(by) {
 }
 function markSort() {
   for (const b of document.querySelectorAll('[data-sort]')) b.setAttribute('aria-pressed', String(b.dataset.sort === sortBy))
+  for (const b of document.querySelectorAll('[data-group-by]')) b.setAttribute('aria-pressed', String(b.dataset.groupBy === groupBy))
 }
 
 // Live counters tick between polls.
@@ -842,6 +970,10 @@ document.addEventListener('click', async (e) => {
   if (pr) return void window.open(pr.dataset.href, '_blank', 'noopener')
   const sort = e.target.closest('[data-sort]')
   if (sort) return setSort(sort.dataset.sort)
+  const groupBtn = e.target.closest('[data-group-by]')
+  if (groupBtn) return setGroup(groupBtn.dataset.groupBy)
+  const head = e.target.closest('[data-group-toggle]')
+  if (head) return toggleGroup(head.dataset.groupToggle)
   const tile = e.target.closest('[data-session]')
   if (tile) return openDrawer(tile.dataset.session)
   if (e.target.closest('[data-close]')) closeDrawer()

@@ -18,7 +18,8 @@ install it and how to serve the page. This file is for working on it.
 - `hooks/board.test.ts`: tests, run by `claude plugin test .`.
 - `dashboard/index.html`: one self-contained page. It lists `sessions/` through
   the directory index that `python -m http.server` serves, polls every 2 s, and
-  keys tiles by session id so CSS animations survive polls. It shows the
+  keys tiles by session id, and group sections (project or work item) by
+  group, so CSS animations survive polls. View choices live in `localStorage`. It shows the
   **queue** form and list only when `GET api/queue` answers, so it still works
   under `python -m http.server`.
 - `server/serve.py`: optional stdlib server for the board folder, but `/`
