@@ -520,6 +520,9 @@ export const register: Register = (on) => {
   })
 
   on('turn.start', async ($, e, next) => {
+    // A subagent's run, or a message to one: its prompt isn't the person's,
+    // and its turn id would hide the main turn's end.
+    if (e.agentId !== undefined) return next(e)
     await turnStarted($, e.text)
     const result = await next(e)
     mainTurnId = result.turnId

@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect, mock, test } from 'claude-code/testing'
 import { boardStatus, pruneShells, shellReported, shellToolDone, SHELL_MAX_MS, addPrs, adoOrgOf, cronFired, cronToolDone, nextCronMatch, pruneCrons, CRON_EXPIRY_MS, WAKEUP_ID, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, childLabel, deriveState, freshBoard, memoryOf, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, summarize, toolLabel, trimAgents, workItemOf, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
 
 describe('summaries', () => {
@@ -178,6 +178,44 @@ test('the board never gets in the way of a tool call', async ($, on) => {
   const result = await $.tool.call({ tool: 'Bash', command: 'echo hi' })
   expect(result.deny).toBe(undefined)
   expect(result.result).toBe('hi')
+})
+
+test('a subagent turn inside the main turn neither ends nor hides it', async ($, on) => {
+  const clock = mock.clock(on, { now: 1_000 })
+  mock.env(on, { SESSION_BOARD_DIR: '/board' })
+  const files = new Map<string, string>()
+  on('session.id', () => ({ value: 's1' }))
+  on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  on('fs.exists', (_$, e) => ({ value: files.has(e.path) }))
+  on('fs.read', (_$, e) => ({ value: files.get(e.path) ?? '' }))
+  on('fs.write', (_$, e) => {
+    files.set(e.path, e.text)
+    return { value: undefined }
+  })
+  on('fs.list', () => ({ value: [] }))
+  on('turn.start', (_$, e) => ({ turnId: e.turnId }))
+  on('turn.complete', () => ({ text: '' }))
+  const status = async () => {
+    await clock.advance(1_000)
+    // The kit resolves the path, to C:\board\... on Windows.
+    const [, text] = [...files].find(([path]) => /[\\/]sessions[\\/]s1\.json$/.test(path)) ?? []
+    return JSON.parse(text ?? '{}')
+  }
+
+  await $.session.start({ cwd: '/x', surface: null, isInteractive: true })
+  await $.turn.start({ text: 'deliver #29588', turnId: 'main' })
+  // A foreground subagent: its prompt and turn arrive while the main turn runs.
+  await $.turn.start({ text: 'Close story 29588', turnId: 'sub', agentId: 'a1' })
+  await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 'sub', agentId: 'a1', reason: 'answer' })
+  await $.tool.call({ tool: 'mcp__session-board__board_status', status: 'done', note: 'delivered' })
+  expect((await status()).state).toBe('running')
+  await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 'main', reason: 'answer' })
+
+  const board = await status()
+  expect(board.state).toBe('idle')
+  expect(board.done?.note).toBe('delivered')
+  expect(board.prompt).toBe('deliver #29588')
+  expect(board.turns).toBe(1)
 })
 
 describe('prompt cache', () => {
