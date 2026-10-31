@@ -54,7 +54,12 @@ the slot frees once the main turn has ended. Otherwise the slot frees after
 `--idle-minutes` idle with no scheduled job and no background shell or Monitor
 (`shells`, removed by the `<task-notification>` turn that names it, by TaskStop,
 or after 2 h, since a notification delivered into a running turn never reaches
-a hook). **Needs you** never frees a slot. A new prompt after `done` clears it.
+a hook). **Needs you** never frees a slot.
+
+The status file keeps two axes apart: `state` is the activity the hooks
+observe, `done` is the task status only the model sets. A prompt after `done`
+leaves it standing; only `board_status working` clears it. The tile shows a
+**✓ Done** badge (with `+N` prompts since) beside the activity.
 
 The plugin is installed at user scope from a local marketplace (this folder), so
 every session runs this working copy. After an edit, run `/reload-plugins` in a

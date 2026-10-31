@@ -247,6 +247,13 @@
     padding: 0 8px; line-height: 20px; border-radius: 999px;
   }
   .s-background .phase { color: var(--bg-agent); background: color-mix(in srgb, var(--bg-agent) 14%, transparent); }
+  .done-badge {
+    flex: none; margin-left: auto;
+    font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase;
+    color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent);
+    padding: 0 8px; line-height: 20px; border-radius: 999px;
+  }
+  .done-badge + .phase { margin-left: 6px; }
 
   .ask {
     padding: 8px 10px; border-radius: 8px; font-size: 12.5px;
@@ -759,8 +766,13 @@ function titleOf(s) {
 
 function tileHtml(s) {
   const stale = isStale(s)
-  // board_status "done": the task it was started with is finished.
-  const phase = s.done && s.state === 'idle' ? 'Done' : phaseOf(s)
+  // Two axes: the activity (state dot, phase) and the task, which only the
+  // model sets with board_status. Done stands through follow-up prompts.
+  const phase = s.done && s.state === 'idle' ? null : phaseOf(s)
+  const after = s.done ? s.events.filter((e) => e.kind === 'prompt' && e.t > s.done.at).length : 0
+  const done = s.done
+    ? `<span class="done-badge" title="said it was done ${esc(clock(s.done.at))}${s.done.note ? `: ${esc(s.done.note)}` : ''}">✓ Done${after ? ` · +${after}` : ''}</span>`
+    : ''
   const parts = []
   parts.push(`
     <div class="t-top">
@@ -770,7 +782,7 @@ function tileHtml(s) {
       ${s.branch ? `<span class="branch">${esc(s.branch)}</span>` : ''}
       <span class="since">${stale ? `no heartbeat ${live(s.updatedAt)}` : live(s.stateSince, STATE_WORD[s.state] + ' ')}</span>
     </div>
-    <div class="title"><span class="tt">${titleOf(s)}</span>${phase ? `<span class="phase">${esc(phase)}</span>` : ''}</div>`)
+    <div class="title"><span class="tt">${titleOf(s)}</span>${done}${phase ? `<span class="phase">${esc(phase)}</span>` : ''}</div>`)
   // The title already shows the prompt's first sentence when there's no work item or skill.
   const promptText = s.workItem || s.skill ? s.prompt : s.prompt?.slice(firstSentence(s.prompt).length).trim()
   parts.push(`<p class="prompt">${esc(promptText)}</p>`)

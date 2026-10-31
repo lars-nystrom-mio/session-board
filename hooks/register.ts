@@ -475,8 +475,8 @@ async function turnStarted($: EngineInterface, text: string) {
     b.promptAt = now()
     event('prompt', shown)
     if (slash) setSkill(slash.name, slash.args)
-    // More to do after it said it was done; a cron firing counts too.
-    if (b.done) b.done = null
+    // A prompt after done leaves done standing: the task is the model's to
+    // reopen with board_status "working", the activity is ours.
     notePrs(prLinksOf(text))
     b.workItem = workItemOf(shown, false) ?? b.workItem
   }

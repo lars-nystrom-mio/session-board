@@ -700,7 +700,8 @@ export const BOARD_STATUS_TOOL = {
     "Tells the session board (the user's dashboard of Claude Code sessions) where this session stands. " +
     'Call it with status "done" once the task this session was started with is finished, such as a work item ' +
     'delivered, and nothing more will happen without the user: a queue of work items waits for it to start ' +
-    'the next session in this repo. Call it with "working" if the user then gives you more to do. ' +
+    'the next session in this repo. Done stands through follow-up questions and small fixes afterwards; ' +
+    'call it with "working" only if the task itself is reopened, and "done" again when it is finished. ' +
     'Not after every turn, and not for a step of a larger task.',
   inputSchema: {
     type: 'object',
@@ -717,11 +718,14 @@ export function boardStatus(board: Board, input: Record<string, unknown>, now: n
   const note = clip(str(input.note), 200)
   if (input.status === 'done') {
     board.done = { at: now, note }
-    return 'Recorded: done. The board frees this session for the next queued work item once the turn ends.'
+    return (
+      'Recorded: done. The board frees this session for the next queued work item once the turn ends. ' +
+      'Follow-ups do not undo it; call "working" only if the task is reopened.'
+    )
   }
   if (input.status === 'working') {
     board.done = null
-    return 'Recorded: working.'
+    return 'Recorded: working. Call "done" again when the task is finished.'
   }
   return 'status must be "done" or "working"; nothing recorded.'
 }
