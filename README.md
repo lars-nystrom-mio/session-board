@@ -109,7 +109,10 @@ pressure the page asks before it opens one.
 
 Change what a session is started with using `--prompt "/my-skill #{id}"` (keep
 the `#` so the tile can read the number before the skill runs); `--port` and
-`--dir` work as you'd expect.
+`--dir` work as you'd expect. A new tab takes its icon from the Windows Terminal
+profile named by `--wt-profile` (`PowerShell`); without one it gets the plain
+console icon. Started from a Claude session, the server drops the `NO_COLOR=1`
+that Claude's shell sets, so sessions it starts keep their colors.
 
 The projects are the folders that sessions on the board have run in (the repo's
 root when there is one). The form and the **+** appear once there is at least
