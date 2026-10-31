@@ -11,6 +11,8 @@ install it and how to serve the page. This file is for working on it.
   `.claude\board\index.html`.
   Once a minute it runs `PROBE` in `powershell.exe` to sample memory: the
   nearest `claude.exe` above the probe is the session's, found once per load.
+  The probe also reads the PC's RAM and commit charge into `machine`; the page
+  and the queue use the newest sample any session wrote.
   It runs `powershell.exe` a second time for `az repos pr show`, to look up
   which repo a PR named only by number is in.
 - `hooks/lib.ts`: the status file's shape (`Board`) and pure helpers. Keep
@@ -30,7 +32,10 @@ install it and how to serve the page. This file is for working on it.
   project (a folder that some status file reports) has a free slot, one by
   default, and frees the slot from that session's status file (`slot_free`). It
   takes no free text, checks `Host`, `Origin` and the JSON content type, and
-  never answers CORS preflights. Tests in `server/test_serve.py`.
+  never answers CORS preflights. Memory pressure in the newest `machine`
+  sample holds new starts (`memory_hold`, with hysteresis); the page's strip
+  turns orange at the same marks, kept in step by hand (`RAM_HIGH_PCT`).
+  Tests in `server/test_serve.py`.
 
 ## How the queue knows a session is finished
 

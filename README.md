@@ -89,6 +89,10 @@ or cancel it) and what just finished and why. **release** frees a running item's
 slot by hand. The queue is kept in `queue.json` in the board folder, so it
 survives a restart of the server.
 
+Under memory pressure, from 90% RAM or 85% commit charge, the queue holds: no new
+item starts until both drop below 85% and 80%. Queued items say so. Without a
+fresh memory sample (one from the last 3 minutes) the queue never holds.
+
 Change what a session is started with using `--prompt "/my-skill #{id}"` (keep
 the `#` so the tile can read the number before the skill runs); `--port` and
 `--dir` work as you'd expect.
@@ -121,6 +125,12 @@ everything it started (MCP servers, running shell commands), sampled once a
 minute through PowerShell, with a two-hour trend line. It turns orange at 1 GB.
 The drawer breaks it down per MCP server and shows how much `claude.exe` has
 grown since the first sample.
+
+The same sample reads the whole PC: a line under the counts shows RAM in use,
+the share of it Claude's sessions take, and commit charge (what processes have
+been promised, against RAM plus the page file). It turns orange from 90% RAM or
+85% commit. Click it for every live session ranked by memory, biggest first, to
+pick one to close.
 
 A session that scheduled its own wakeups (`CronCreate`, `/loop`,
 `ScheduleWakeup`) shows ⏱ and a countdown to the next one, with every job on

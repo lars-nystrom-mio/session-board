@@ -64,6 +64,7 @@
   .launch :focus-visible { outline: 2px solid var(--run); outline-offset: 1px; }
   .launch output { color: var(--muted); white-space: nowrap; }
   .launch output.error { color: var(--you); }
+  .ram:not([hidden]) + .status { margin-left: auto; }
   .status { font-family: var(--mono); font-size: 12px; color: var(--muted); }
   .status .dot {
     display: inline-block; width: 7px; height: 7px; border-radius: 50%;
@@ -71,6 +72,32 @@
   }
   .status.error { color: var(--you); }
   .status.error .dot { background: var(--you); }
+
+  /* The PC's memory: one line under the counts. Quiet until pressure is high. */
+  /* Starts the strip's row, which the status line ends; gone with the strip. */
+  .ram-break { flex-basis: 100%; height: 0; }
+  .ram-break:has(+ .ram[hidden]) { display: none; }
+  .ram {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: -4px 0 0 -6px; padding: 3px 6px;
+    background: none; border: 0; border-radius: 6px; cursor: pointer; text-align: left;
+    font-family: var(--mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums;
+  }
+  .ram[hidden] { display: none; }
+  .ram:hover { background: var(--card); color: var(--text); }
+  .ram:focus-visible { outline: 2px solid var(--run); outline-offset: 1px; }
+  .ram .k { color: var(--faint); }
+  .ram .bar { display: flex; width: 168px; height: 6px; border-radius: 3px; overflow: hidden; background: var(--line); }
+  .ram .bar i { display: block; height: 100%; }
+  .ram .bar .c { background: var(--muted); }
+  .ram .bar .o { background: color-mix(in srgb, var(--faint) 50%, var(--line)); }
+  .ram b { font-weight: 600; color: var(--text); }
+  .ram .sep { color: var(--faint); }
+  .ram .hi, .ram .held { color: var(--warn); }
+  .ram .hi b { color: inherit; }
+  .ram.hot .bar .c { background: var(--warn); }
+  .ram.hot .bar .o { background: color-mix(in srgb, var(--warn) 40%, var(--line)); }
+  .ram.stale .bar { opacity: .45; }
+  .ram.stale .when { color: var(--warn); }
 
   main { padding: 18px 32px 40px; }
 
@@ -316,6 +343,26 @@
   .ev.agent .k { color: var(--bg-agent); }
   .ev.skill .k { color: var(--warn); }
   .ev.tool .tx { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+  /* The memory drawer's sessions, biggest first. */
+  .mem-rows { display: grid; gap: 1px; }
+  .mrow {
+    display: grid; grid-template-columns: 64px 56px minmax(0, 1fr) auto; gap: 12px; align-items: center; width: 100%;
+    text-align: left; background: none; border: 0; border-radius: 6px; padding: 5px 8px; margin: 0 -8px; cursor: pointer;
+    font-size: 12.5px; color: var(--muted); box-sizing: content-box;
+  }
+  .mrow:hover { background: var(--card); color: var(--text); }
+  .mrow:focus-visible { outline: 2px solid var(--run); outline-offset: -2px; }
+  .mrow .n { font-family: var(--mono); font-size: 12px; color: var(--text); text-align: right; font-variant-numeric: tabular-nums; }
+  .mrow .share { height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+  .mrow .share i { display: block; height: 100%; background: var(--muted); }
+  .mrow.big .n { color: var(--warn); }
+  .mrow.big .share i { background: var(--warn); }
+  .mrow .p { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+  .mrow .p span { color: var(--faint); margin-left: 6px; }
+  .mrow .w { font-family: var(--mono); font-size: 11px; color: var(--faint); white-space: nowrap; }
+  .mrow .w.you { color: var(--you); }
+  .mrow .w.run { color: var(--run); }
+  .note { margin: 10px 0 0; font-size: 12px; color: var(--faint); }
 
   @keyframes sweep { from { transform: translateX(-50%); } to { transform: translateX(150%); } }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
@@ -337,6 +384,9 @@
     .q .wi, .q .x { display: none; }
     .row { grid-template-columns: 1fr auto; }
     .row .x { display: none; }
+    .ram .bar { width: 96px; }
+    .mrow { grid-template-columns: 56px minmax(0, 1fr) auto; }
+    .mrow .share { display: none; }
     .d-head { padding: 16px; }
     .d-body { padding: 16px 16px 48px; }
     .kv { grid-template-columns: 90px 1fr; }
@@ -370,6 +420,8 @@
       <button data-sort="waiting" aria-pressed="false">needs you first</button>
     </div>
   </div>
+  <div class="ram-break"></div>
+  <button class="ram" id="ram" data-memory hidden aria-haspopup="dialog"></button>
   <div class="status" id="status">connecting…</div>
 </header>
 <main>
@@ -532,6 +584,97 @@ function memHtml(s) {
   const trend = memTrend(m)
   const title = `claude.exe ${mb(m.mb)} (${mb(m.wsMb)} in RAM) + ${mb(m.childMb)} started by it${trend ? `\nclaude.exe ${trend}` : ''}`
   return `<span class="mem ${memTotal(m) >= MEM_HOT_MB ? 'hot' : ''}" title="${esc(title)}">${sparkline(m.history)}${mb(memTotal(m))}</span>`
+}
+
+// ---- The PC's memory --------------------------------------------------------
+
+// The strip turns orange at the marks where server/serve.py holds the queue
+// (RAM_HOLD and COMMIT_HOLD); it resumes below RAM_RELEASE and COMMIT_RELEASE.
+const RAM_HIGH_PCT = 90, COMMIT_HIGH_PCT = 85
+const RAM_RELEASE_PCT = 85, COMMIT_RELEASE_PCT = 80
+const MACHINE_STALE_MS = 180_000  // a sample older than this is shown as stale
+const MEMORY_DRAWER = '@memory'   // openId of the memory drawer, never a session id
+const pct = (part, whole) => Math.round((100 * part) / whole)
+const gb = (n) => (n / 1024).toFixed(1)
+const liveSessions = () => sessions.filter((s) => s.state !== 'ended' && !isStale(s))
+
+// Every session samples the whole PC; the newest sample wins.
+function machineOf() {
+  let m = null
+  for (const s of sessions) if (s.machine && (!m || s.machine.at > m.at)) m = s.machine
+  return m
+}
+
+function machineView() {
+  const m = machineOf()
+  if (!m) return null
+  const withMem = liveSessions().filter((s) => s.memory)
+  const claude = withMem.reduce((sum, s) => sum + memTotal(s.memory), 0)
+  const ram = pct(m.ramMb, m.ramTotalMb)
+  const commit = pct(m.commitMb, m.commitLimitMb)
+  return {
+    m, withMem, claude, ram, commit,
+    ramHi: ram >= RAM_HIGH_PCT, commitHi: commit >= COMMIT_HIGH_PCT,
+    stale: Date.now() - m.at > MACHINE_STALE_MS,
+    held: queueServed ? queue?.held || null : null,
+  }
+}
+
+function renderMemory() {
+  const v = machineView()
+  const el = $('ram')
+  el.hidden = !v
+  if (!v) return
+  const { m, claude, ram, commit } = v
+  // Claude's sessions count private memory, which can exceed what sits in RAM.
+  const inRam = Math.min(claude, m.ramMb)
+  const cls = `ram${v.ramHi || v.commitHi ? ' hot' : ''}${v.stale ? ' stale' : ''}`
+  const sep = '<span class="sep">·</span>'
+  const html = `<span class="k">RAM</span>
+    <span class="bar"><i class="c" style="width:${((100 * inRam) / m.ramTotalMb).toFixed(1)}%"></i><i class="o" style="width:${((100 * (m.ramMb - inRam)) / m.ramTotalMb).toFixed(1)}%"></i></span>
+    <span class="${v.ramHi ? 'hi' : ''}"><b>${gb(m.ramMb)}</b> / ${gb(m.ramTotalMb)} GB</span>${sep}
+    <span class="${v.commitHi ? 'hi' : ''}">commit <b>${commit}%</b></span>${sep}
+    <span>claude <b>${mb(claude)}</b> in ${v.withMem.length} session${v.withMem.length === 1 ? '' : 's'}</span>
+    ${v.held ? `${sep}<span class="held">queue held</span>` : ''}
+    ${v.stale ? `${sep}<span class="when">as of ${esc(clock(m.at))}</span>` : ''}`
+  if (el.className !== cls) el.className = cls
+  if (el.dataset.html !== html) {
+    el.innerHTML = html
+    el.dataset.html = html
+    el.setAttribute('aria-label', `Memory: RAM ${ram}% of ${gb(m.ramTotalMb)} GB, commit ${commit}%, Claude sessions ${mb(claude)}${v.held ? ', queue held' : ''}. Show sessions by memory.`)
+  }
+}
+
+function memoryDrawerHtml() {
+  const v = machineView()
+  if (!v) return '<p class="note">No memory sample yet. Sessions sample it once a minute on Windows.</p>'
+  const { m, claude, ram, commit } = v
+  // Biggest first; at equal size, the session idle longest, as the easiest to close.
+  const order = (s) => (s.state === 'idle' ? 0 : 1)
+  const list = [...v.withMem].sort((a, b) => memTotal(b.memory) - memTotal(a.memory) || order(a) - order(b) || a.stateSince - b.stateSince)
+  const top = list.length ? memTotal(list[0].memory) : 1
+  const stateCls = { waiting: 'you', running: 'run', background: 'run' }
+  const rows = list.map((s) => {
+    const total = memTotal(s.memory)
+    const what = s.workItem ? `#${s.workItem}` : s.tabTitle || (s.prompt ? firstSentence(s.prompt) : '')
+    return `<button class="mrow${total >= MEM_HOT_MB ? ' big' : ''}" data-session="${esc(s.sessionId)}">
+      <span class="n">${mb(total)}</span>
+      <span class="share"><i style="width:${((100 * total) / top).toFixed(1)}%"></i></span>
+      <span class="p">${esc(projectOf(s))}${what ? `<span>${esc(what)}</span>` : ''}</span>
+      <span class="w ${stateCls[s.state] || ''}">${esc(STATE_WORD[s.state])}${s.state === 'idle' ? ` ${live(s.stateSince)}` : ''}</span>
+    </button>`
+  }).join('')
+  return `<h3>Pressure</h3><dl class="kv">
+    <dt>RAM in use</dt><dd${v.ramHi ? ' style="color:var(--warn)"' : ''}>${gb(m.ramMb)} of ${gb(m.ramTotalMb)} GB · ${ram}%</dd>
+    <dt>commit</dt><dd${v.commitHi ? ' style="color:var(--warn)"' : ''}>${gb(m.commitMb)} of ${gb(m.commitLimitMb)} GB · ${commit}% (the limit is RAM plus the page file)</dd>
+    <dt>Claude</dt><dd>${mb(claude)} in ${v.withMem.length} session${v.withMem.length === 1 ? '' : 's'} · ${pct(claude, m.ramTotalMb)}% of RAM</dd>
+    <dt>sampled</dt><dd${v.stale ? ' style="color:var(--warn)"' : ''}>${esc(clock(m.at))}${v.stale ? ' · no newer sample' : ''}</dd>
+    ${queueServed ? `<dt>queue</dt><dd${v.held ? ' style="color:var(--warn)"' : ''}>${v.held ? `holding new starts (${esc(v.held)})` : 'starts new items'}</dd>` : ''}
+  </dl>
+  ${queueServed ? `<p class="note">The queue holds new starts at ${RAM_HIGH_PCT}% RAM or ${COMMIT_HIGH_PCT}% commit and resumes once both are below ${RAM_RELEASE_PCT}% and ${COMMIT_RELEASE_PCT}%.</p>` : ''}
+  <h3>Sessions by memory</h3>
+  ${rows ? `<div class="mem-rows">${rows}</div>` : '<p class="note">No live session has a memory sample yet.</p>'}
+  <p class="note">Each session's claude.exe plus everything it started, in private memory, sampled once a minute.</p>`
 }
 
 // Jobs that will wake the session, soonest first; those with no next time last.
@@ -742,6 +885,7 @@ function render() {
     return `<span class="${c}${n ? '' : ' zero'}"><b>${n}</b> ${w}</span>`
   }).join('')
   if ($('summary').dataset.html !== summary) { $('summary').innerHTML = summary; $('summary').dataset.html = summary }
+  renderMemory()
 
   // Groups, keyed like tiles so polls never rebuild them. Tiles are placed first
   // and unused sections removed after, so a tile that changes group just moves.
@@ -937,6 +1081,13 @@ function drawerHtml(s) {
 }
 
 function renderDrawer() {
+  if (openId === MEMORY_DRAWER) {
+    $('d-sub').textContent = 'this PC'
+    if ($('d-title').dataset.html !== 'Memory') { $('d-title').textContent = 'Memory'; $('d-title').dataset.html = 'Memory' }
+    const html = memoryDrawerHtml()
+    if (html !== openHtml) { $('d-body').innerHTML = html; openHtml = html; tick() }
+    return
+  }
   const s = sessions.find((x) => x.sessionId === openId)
   if (!s) return
   $('d-sub').textContent = [projectOf(s), s.branch].filter(Boolean).join(' · ')
@@ -974,6 +1125,7 @@ document.addEventListener('click', async (e) => {
   if (groupBtn) return setGroup(groupBtn.dataset.groupBy)
   const head = e.target.closest('[data-group-toggle]')
   if (head) return toggleGroup(head.dataset.groupToggle)
+  if (e.target.closest('[data-memory]')) return openDrawer(MEMORY_DRAWER)
   const tile = e.target.closest('[data-session]')
   if (tile) return openDrawer(tile.dataset.session)
   if (e.target.closest('[data-close]')) closeDrawer()
@@ -1048,7 +1200,7 @@ function renderQueue() {
       const info = s ? `${esc(STATE_WORD[s.state])}${s.done ? ' · said it was done' : ''} · started ${live(i.startedAt)} ago` : `starting · ${live(i.startedAt)}`
       return row(i, 'running', info, [['release', 'release', 'count this one as finished and start the next']])
     }),
-    ...waiting.map((i) => row(i, 'queued', `${ordinal(place(i))} in ${esc(i.name)} · queued ${clock(i.queuedAt)}`, [
+    ...waiting.map((i) => row(i, 'queued', `${queue.held ? `<span style="color:var(--warn)">held: ${esc(queue.held)}</span> · ` : ''}${ordinal(place(i))} in ${esc(i.name)} · queued ${clock(i.queuedAt)}`, [
       ['first', '↑', 'move to the front of the queue'],
       ['cancel', 'cancel', 'take it off the queue'],
     ])),
@@ -1057,6 +1209,7 @@ function renderQueue() {
   const el = $('queue')
   el.hidden = !html
   if (el.dataset.html !== html) { el.innerHTML = html; el.dataset.html = html; tick() }
+  renderMemory()
 }
 
 async function postQueue(body) {

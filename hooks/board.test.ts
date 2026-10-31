@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'claude-code/testing'
-import { boardStatus, pruneShells, shellReported, shellToolDone, SHELL_MAX_MS, addPrs, adoOrgOf, cronFired, cronToolDone, nextCronMatch, pruneCrons, CRON_EXPIRY_MS, WAKEUP_ID, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, childLabel, deriveState, freshBoard, memoryOf, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, summarize, toolLabel, trimAgents, workItemOf, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
+import { boardStatus, pruneShells, shellReported, shellToolDone, SHELL_MAX_MS, addPrs, adoOrgOf, cronFired, cronToolDone, nextCronMatch, pruneCrons, CRON_EXPIRY_MS, WAKEUP_ID, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, childLabel, deriveState, freshBoard, memoryOf, parseMachine, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, summarize, toolLabel, trimAgents, workItemOf, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
 
 describe('summaries', () => {
   test('a tool call becomes one short line', async () => {
@@ -235,6 +235,18 @@ describe('memory', () => {
     expect(parseProbe('{"root":5,"procs":{"pid":5,"ppid":1,"name":"claude.exe","cmd":"","mb":1,"wsMb":1}}\r\n')?.procs.length).toBe(1)
     expect(parseProbe('{}')).toBe(null)
     expect(parseProbe('Get-CimInstance : access denied')).toBe(null)
+  })
+
+  test('machine totals come with or without a claude.exe', async () => {
+    const machine = '"machine":{"ramTotalMb":32000,"ramFreeMb":8000,"commitLimitMb":40000,"commitFreeMb":10000}'
+    const want = { at: 7, ramMb: 24000, ramTotalMb: 32000, commitMb: 30000, commitLimitMb: 40000 }
+    expect(parseMachine(`{${machine}}`, 7)).toEqual(want)
+    expect(parseMachine(`{"root":5,"procs":[],${machine}}\r\n`, 7)).toEqual(want)
+    expect(parseProbe(`{${machine}}`)).toBe(null)
+    expect(parseMachine('{}', 7)).toBe(null)
+    expect(parseMachine('{"machine":{"ramTotalMb":0,"ramFreeMb":0,"commitLimitMb":1,"commitFreeMb":0}}', 7)).toBe(null)
+    expect(parseMachine('{"machine":{"ramTotalMb":8,"ramFreeMb":9,"commitLimitMb":9,"commitFreeMb":0}}', 7)).toBe(null)
+    expect(parseMachine('access denied', 7)).toBe(null)
   })
 })
 

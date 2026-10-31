@@ -6,7 +6,7 @@
 GET serves the board folder like `python -m http.server`, directory index
 included, so the page reads `sessions/` the same way.
 
-GET  api/queue -> {"prompt", "maxSessions", "projects": [{"path", "name", "max"}], "items": [...]}
+GET  api/queue -> {"prompt", "maxSessions", "held", "projects": [{"path", "name", "max"}], "items": [...]}
 POST api/queue {"action": "add", "workItem": "1234", "cwd": "<a path from projects>"}
                {"action": "cancel" | "first" | "release", "id": "<item id>"}
                {"action": "limit", "cwd": "<a path from projects>", "max": 2}
@@ -20,7 +20,9 @@ status file, which says when the slot is free again: the session called the
 board's board_status tool with "done" and its turn ended; it sat idle for
 --idle-minutes with nothing in the background or scheduled; it ended; or it
 stopped writing. "release" frees a slot by hand. Only items count against the
-limits, not sessions started some other way. The queue is kept in queue.json in
+limits, not sessions started some other way. While the newest memory sample a
+session wrote shows RAM or commit charge too high, nothing new starts ("held").
+The queue is kept in queue.json in
 the board folder, so a restart picks it up.
 
 Only a work item number and one of the projects that sessions have reported can
@@ -48,6 +50,12 @@ TICK_S = 5
 GONE_MS = 60_000  # a status file this old belongs to a session that is gone
 START_MS = 180_000  # a started item with no status file after this never came up
 KEEP_ENDED = 20  # finished, failed and cancelled items kept for the page
+# Memory pressure, in percent of RAM and of the commit limit, that holds the queue:
+# no new item starts from HOLD until both drop below RELEASE. The page's header
+# strip turns orange at the same HOLD values.
+RAM_HOLD, COMMIT_HOLD = 90, 85
+RAM_RELEASE, COMMIT_RELEASE = 85, 80
+MACHINE_STALE_MS = 180_000  # an older machine sample doesn't count
 # The page from this repo rather than the board folder's copy, which a session
 # only refreshes when it starts.
 PAGE = Path(__file__).resolve().parent.parent / "dashboard" / "index.html"
@@ -165,10 +173,42 @@ def slot_free(board: dict | None, started_at: int, now: int, idle_ms: int) -> st
     return None
 
 
-def advance(queue: dict, boards: dict, now: int, idle_ms: int, max_sessions: int) -> list[dict]:
+def newest_machine(board: Path, now: int) -> dict | None:
+    """The newest machine memory sample any session wrote, or None if none is fresh."""
+    best = None
+    for f in (board / "sessions").glob("*.json"):
+        try:
+            if now - f.stat().st_mtime * 1000 > MACHINE_STALE_MS:
+                continue
+            m = json.loads(f.read_text(encoding="utf-8")).get("machine")
+            if isinstance(m, dict) and isinstance(m.get("at"), (int, float)) and (best is None or m["at"] > best["at"]):
+                best = m
+        except (OSError, ValueError, AttributeError):
+            continue  # mid-write or malformed
+    return best if best and now - best["at"] <= MACHINE_STALE_MS else None
+
+
+def memory_hold(machine: dict | None, held: bool) -> str | None:
+    """Why memory pressure holds the queue, or None. `held` says it held on the
+    last tick, which lowers the bar to the release thresholds."""
+    try:
+        ram = 100 * machine["ramMb"] / machine["ramTotalMb"]
+        commit = 100 * machine["commitMb"] / machine["commitLimitMb"]
+    except (TypeError, KeyError, ZeroDivisionError):
+        return None  # no fresh sample: never hold on a reading we don't have
+    ram_at, commit_at = (RAM_RELEASE, COMMIT_RELEASE) if held else (RAM_HOLD, COMMIT_HOLD)
+    over = []
+    if ram >= ram_at:
+        over.append(f"RAM {ram:.0f}%")
+    if commit >= commit_at:
+        over.append(f"commit {commit:.0f}%")
+    return "memory " + ", ".join(over) if over else None
+
+
+def advance(queue: dict, boards: dict, now: int, idle_ms: int, max_sessions: int, hold: bool = False) -> list[dict]:
     """Frees the slots of running items whose sessions are finished, then marks
-    queued items running, in order, while there's room. Returns the items to
-    start; the caller starts them, and marks one failed if that fails.
+    queued items running, in order, while there's room and no `hold`. Returns
+    the items to start; the caller starts them, and marks one failed if that fails.
 
     `boards` maps a session id to its status file, for the running items' sessions.
     """
@@ -181,7 +221,7 @@ def advance(queue: dict, boards: dict, now: int, idle_ms: int, max_sessions: int
     running = [i for i in queue["items"] if i["state"] == "running"]
     starting = []
     for item in queue["items"]:
-        if item["state"] != "queued" or len(running) >= max_sessions:
+        if hold or item["state"] != "queued" or len(running) >= max_sessions:
             continue
         here = sum(1 for i in running if key(i["cwd"]) == key(item["cwd"]))
         if here >= queue["limits"].get(key(item["cwd"]), 1):
@@ -238,6 +278,7 @@ class Queue:
         self.max_sessions = max_sessions
         self.start = start
         self.lock = threading.Lock()
+        self.held: str | None = None  # why memory pressure holds new starts
 
     def load(self) -> dict:
         try:
@@ -265,7 +306,9 @@ class Queue:
         """Advances `q` and starts what may start; call it with the lock held."""
         boards = {i["sessionId"]: self.read_board(i["sessionId"]) for i in q["items"] if i["state"] == "running"}
         now = int(time.time() * 1000)
-        for item in advance(q, {k: v for k, v in boards.items() if v is not None}, now, self.idle_ms, self.max_sessions):
+        self.held = memory_hold(newest_machine(self.board, now), self.held is not None)
+        live = {k: v for k, v in boards.items() if v is not None}
+        for item in advance(q, live, now, self.idle_ms, self.max_sessions, hold=self.held is not None):
             prompt = self.prompt.replace("{id}", item["workItem"])
             try:
                 self.start(item["cwd"], prompt, item["sessionId"])
@@ -286,6 +329,7 @@ class Queue:
         return {
             "prompt": self.prompt,
             "maxSessions": self.max_sessions,
+            "held": self.held,
             "projects": [{**p, "max": q["limits"].get(key(p["path"]), 1)} for p in projects],
             "items": q["items"],
         }
