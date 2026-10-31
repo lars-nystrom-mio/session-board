@@ -1,10 +1,11 @@
 import json
 import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
-from serve import GONE_MS, START_MS, Queue, advance, check_launch, known_projects, launch_command, same_origin, slot_free
+from serve import GONE_MS, MACHINE_STALE_MS, START_MS, Queue, advance, check_launch, known_projects, launch_command, memory_hold, same_origin, slot_free
 
 
 def write_session(board: Path, sid: str, **fields) -> None:
@@ -138,6 +139,22 @@ class Advance(unittest.TestCase):
         self.assertEqual((q["items"][0]["state"], q["items"][0]["endedBy"]), ("finished", "done"))
         self.assertTrue(started[0]["sessionId"])
 
+    def test_hold_starts_nothing_but_still_frees_slots(self):
+        q = {"limits": {}, "items": [item(1, "/a", "running", sessionId="s1", startedAt=0), item(2, "/a")]}
+        self.assertEqual(advance(q, {"s1": board(state="ended", updatedAt=100)}, 100, IDLE, 4, hold=True), [])
+        self.assertEqual([i["state"] for i in q["items"]], ["finished", "queued"])
+
+
+class MemoryHold(unittest.TestCase):
+    def test_thresholds_and_release(self):
+        m = lambda ram, commit: {"ramMb": ram, "ramTotalMb": 100, "commitMb": commit, "commitLimitMb": 100}
+        self.assertIsNone(memory_hold(m(89, 84), held=False))
+        self.assertEqual(memory_hold(m(90, 85), held=False), "memory RAM 90%, commit 85%")
+        self.assertEqual(memory_hold(m(70, 82), held=True), "memory commit 82%")
+        self.assertIsNone(memory_hold(m(84, 79), held=True))
+        self.assertIsNone(memory_hold(None, held=True))
+        self.assertIsNone(memory_hold({"ramMb": 1}, held=False))
+
 
 class QueueActions(unittest.TestCase):
     def setUp(self):
@@ -185,6 +202,29 @@ class QueueActions(unittest.TestCase):
                     {"action": "run"}, ["add"]]:
             with self.assertRaises(ValueError):
                 self.queue.act(bad, self.projects)
+
+    def write_machine(self, ram_pct, commit_pct, at=None):
+        at = int(time.time() * 1000) if at is None else at
+        sessions = self.board / "sessions"
+        sessions.mkdir(exist_ok=True)
+        m = {"at": at, "ramMb": ram_pct, "ramTotalMb": 100, "commitMb": commit_pct, "commitLimitMb": 100}
+        (sessions / "x.json").write_text(json.dumps({"machine": m}), encoding="utf-8")
+
+    def test_memory_pressure_holds_new_starts(self):
+        self.write_machine(95, 50)
+        self.assertEqual(self.add(1)["state"], "queued")
+        self.assertEqual(self.queue.view(self.projects)["held"], "memory RAM 95%")
+        self.write_machine(86, 50)  # under the hold mark, not yet under the release mark
+        self.queue.tick()
+        self.assertEqual(self.started, [])
+        self.write_machine(60, 50)
+        self.queue.tick()
+        self.assertEqual(len(self.started), 1)
+        self.assertIsNone(self.queue.view(self.projects)["held"])
+
+    def test_a_stale_sample_never_holds(self):
+        self.write_machine(99, 99, at=int(time.time() * 1000) - MACHINE_STALE_MS - 1000)
+        self.assertEqual(self.add(1)["state"], "running")
 
     def test_a_failed_start_is_marked_and_frees_the_slot(self):
         def fail(*a):

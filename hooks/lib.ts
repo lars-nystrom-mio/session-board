@@ -79,6 +79,9 @@ export type Board = {
   cache?: { at: number; ttl: CacheTtl | null } | null
   // The session's claude.exe and what it started, sampled once a minute (Windows only).
   memory?: SessionMemory | null
+  // The whole PC's RAM and commit charge, sampled with `memory`. Every session
+  // reports it; the page and the queue use the newest.
+  machine?: MachineMemory | null
   // Jobs that will wake this session: CronCreate, /loop and ScheduleWakeup.
   crons?: CronRec[]
   // Background shells and monitors that haven't reported back yet.
@@ -129,6 +132,10 @@ export type SessionMemory = {
   // [time, mb] of the claude.exe process, oldest first.
   history: [number, number][]
 }
+
+// Sizes in MB. Commit charge is what processes have been promised, in RAM or the
+// page file; when it reaches the limit, allocations fail.
+export type MachineMemory = { at: number; ramMb: number; ramTotalMb: number; commitMb: number; commitLimitMb: number }
 
 export const MEMORY_HISTORY = 120 // two hours at one sample a minute
 
@@ -424,6 +431,22 @@ export function parseProbe(stdout: string): ProbeResult | null {
     const raw = JSON.parse(stdout.trim()) as { root?: number; procs?: ProcRec | ProcRec[] }
     if (!raw.root || !raw.procs) return null
     return { root: raw.root, procs: Array.isArray(raw.procs) ? raw.procs : [raw.procs] }
+  } catch {
+    return null
+  }
+}
+
+// The machine totals in the probe's output; null when missing or not sensible.
+export function parseMachine(stdout: string, at: number): MachineMemory | null {
+  try {
+    const m = (JSON.parse(stdout.trim()) as { machine?: Record<string, unknown> }).machine
+    if (!m) return null
+    const [ramTotalMb, ramFreeMb, commitLimitMb, commitFreeMb] = ['ramTotalMb', 'ramFreeMb', 'commitLimitMb', 'commitFreeMb'].map((k) => m[k])
+    const sizes = [ramTotalMb, ramFreeMb, commitLimitMb, commitFreeMb]
+    if (!sizes.every((n): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0)) return null
+    const [total, free, limit, commitFree] = sizes as [number, number, number, number]
+    if (!total || !limit || free > total || commitFree > limit) return null
+    return { at, ramMb: total - free, ramTotalMb: total, commitMb: limit - commitFree, commitLimitMb: limit }
   } catch {
     return null
   }
@@ -768,6 +791,7 @@ export function freshBoard(sessionId: string, cwd: string, now: number): Board {
     costUsd: null,
     cache: null,
     memory: null,
+    machine: null,
     crons: [],
     shells: [],
     done: null,
