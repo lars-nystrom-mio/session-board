@@ -7,6 +7,7 @@ import {
   type PrRec,
   type ToolRec,
   type Waiting,
+  BOARD_QUEUE_TOOL,
   BOARD_STATUS_TOOL,
   QUIET_TOOLS,
   addPrs,
@@ -28,6 +29,7 @@ import {
   projectDirName,
   pruneCrons,
   pruneShells,
+  plannedWork,
   pushEvent,
   scansForPrs,
   sessionTitleOf,
@@ -90,6 +92,7 @@ let memoryFailures = 0
 const tools = new Map<string, ToolRec>()
 // What the model calls board_status as: mcp__<plugin>__board_status.
 let boardTool = 'mcp__session-board__board_status'
+let queueTool = 'mcp__session-board__board_queue'
 
 const now = () => Date.now()
 
@@ -346,6 +349,10 @@ async function init($: EngineInterface, cwd: string, interactive: boolean, reaso
   try {
     boardTool = (await $.tool.register({ ...BOARD_STATUS_TOOL, isDeferred: false })).tool
   } catch {}
+  try {
+    // Deferred: only planning sessions need it, so it costs the rest nothing.
+    queueTool = (await $.tool.register({ ...BOARD_QUEUE_TOOL, isDeferred: true })).tool
+  } catch {}
   await copyDashboard($, dir)
   await refreshSlow($)
   await readTranscript($)
@@ -373,6 +380,32 @@ async function boardStatusCalled($: EngineInterface, input: Record<string, unkno
   event('turn', b.done ? `done${b.done.note ? `: ${b.done.note}` : ''}` : 'working again')
   schedule($)
   return reply
+}
+
+// The board's read-only tool: the work items queued or in progress, for planning sessions.
+async function boardQueueCalled($: EngineInterface, input: Record<string, unknown>): Promise<string> {
+  let dir: string
+  try {
+    dir = await boardDir($)
+  } catch {
+    return 'The board is not available in this session.'
+  }
+  const readJson = async (path: string): Promise<unknown> => {
+    try {
+      return JSON.parse(await $.fs.read(path)) as unknown
+    } catch {
+      return null // missing, or caught mid-write
+    }
+  }
+  const queue = (await $.fs.exists(`${dir}/queue.json`)) ? await readJson(`${dir}/queue.json`) : null
+  const boards: unknown[] = []
+  try {
+    for (const f of await $.fs.list(`${dir}/sessions`)) {
+      if (f.kind !== 'dir' && f.name.endsWith('.json')) boards.push(await readJson(`${dir}/sessions/${f.name}`))
+    }
+  } catch {}
+  const project = typeof input.project === 'string' ? input.project : ''
+  return plannedWork(queue, boards, board?.sessionId ?? '', now(), project)
 }
 
 function setWaiting($: EngineInterface, waiting: Waiting) {
@@ -567,6 +600,7 @@ export const register: Register = (on) => {
 
   on('tool.call', async ($, e, next) => {
     if (e.tool === boardTool) return { result: await boardStatusCalled($, e as unknown as Record<string, unknown>) }
+    if (e.tool === queueTool) return { result: await boardQueueCalled($, e as unknown as Record<string, unknown>) }
     const rec = await toolStarted($, e.tool, e as unknown as Record<string, unknown>, e.tool_use_id, e.agentId)
     if (!rec) return next(e)
     let outcome: 'ok' | 'denied' | 'failed' = 'failed'

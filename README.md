@@ -89,6 +89,14 @@ or cancel it) and what just finished and why. **release** frees a running item's
 slot by hand. The queue is kept in `queue.json` in the board folder, so it
 survives a restart of the server.
 
+Any session can read what is already planned through the board's `board_queue`
+tool. It lists the work items that are queued or running from the queue, plus
+those that other live sessions are on, by project, and takes an optional
+`project` to show just one. It's read-only, it gives numbers without titles,
+and it reads `queue.json` directly, so the server doesn't have to be running.
+The tool is deferred, so a session finds it through tool search when it plans
+work, and other sessions get no extra context.
+
 Under memory pressure, from 90% RAM or 85% commit charge, the queue holds: no new
 item starts until both drop below 85% and 80%. Queued items say so. Without a
 fresh memory sample (one from the last 3 minutes) the queue never holds.
