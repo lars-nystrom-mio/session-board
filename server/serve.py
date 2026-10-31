@@ -1,7 +1,7 @@
 """Serves the session board and runs a queue of work items, a Claude Code session each.
 
     python server/serve.py [--port 8765] [--dir <board folder>] [--prompt "deliver #{id}"]
-                           [--max-sessions 4] [--idle-minutes 15]
+                           [--max-sessions 4] [--idle-minutes 15] [--wt-profile PowerShell]
 
 GET serves the board folder like `python -m http.server`, directory index
 included, so the page reads `sessions/` the same way.
@@ -10,6 +10,7 @@ GET  api/queue -> {"prompt", "maxSessions", "held", "projects": [{"path", "name"
 POST api/queue {"action": "add", "workItem": "1234", "cwd": "<a path from projects>"}
                {"action": "cancel" | "first" | "release", "id": "<item id>"}
                {"action": "limit", "cwd": "<a path from projects>", "max": 2}
+               {"action": "open", "cwd": "<a path from projects>"}
 
 An item starts when its project has a free slot (one by default, as two
 sessions in one working copy get in each other's way) and fewer than
@@ -24,6 +25,10 @@ limits, not sessions started some other way. While the newest memory sample a
 session wrote shows RAM or commit charge too high, nothing new starts ("held").
 The queue is kept in queue.json in
 the board folder, so a restart picks it up.
+
+"open" starts an empty `claude --session-id <id>` in a project right away. It
+is not a queue item: it takes no slot, and memory pressure doesn't hold it (the
+page asks first).
 
 Only a work item number and one of the projects that sessions have reported can
 be sent: the server never runs text from a request.
@@ -126,14 +131,20 @@ def check_project(body, projects: list[dict]) -> dict:
     return match[0]
 
 
+def check_folder(body, projects: list[dict]) -> dict:
+    """The project a request to start a session names, if its folder still exists."""
+    project = check_project(body, projects)
+    if not os.path.isdir(project["path"]):
+        raise ValueError(f"{project['path']} no longer exists")
+    return project
+
+
 def check_launch(body, projects: list[dict]) -> tuple[str, str]:
     """The work item and folder of a request to queue one; raises ValueError otherwise."""
-    project = check_project(body, projects)
+    project = check_folder(body, projects)
     item = str(body.get("workItem", "")).strip().lstrip("#")
     if not WORK_ITEM.match(item):
         raise ValueError("workItem must be a work item number")
-    if not os.path.isdir(project["path"]):
-        raise ValueError(f"{project['path']} no longer exists")
     return item, project["path"]
 
 
@@ -240,28 +251,38 @@ def trim(queue: dict) -> None:
     queue["items"] = [i for i in queue["items"] if id(i) not in drop]
 
 
-def child_env() -> dict:
+def child_env(environ=os.environ) -> dict:
     """This environment minus what marks a process as running inside Claude Code,
-    for when the server itself was started from a session."""
-    return {k: v for k, v in os.environ.items()
-            if not (k == "CLAUDECODE" or k.startswith("CLAUDE_CODE_"))}
+    for when the server itself was started from a session. Such a server also
+    has the NO_COLOR=1 that Claude Code's shell tool sets, which would start
+    every session without colors."""
+    from_session = "CLAUDECODE" in environ
+    return {k: v for k, v in environ.items()
+            if not (k == "CLAUDECODE" or k.startswith("CLAUDE_CODE_") or (from_session and k == "NO_COLOR"))}
 
 
-def launch_command(claude: str, cwd: str, prompt: str, session_id: str, wt: str | None) -> list[str]:
-    args = [claude, "--session-id", session_id, prompt]
+def launch_command(claude: str, cwd: str, prompt: str, session_id: str, wt: str | None, profile: str = "") -> list[str]:
+    """The command that opens a session; an empty prompt opens an empty one.
+
+    Without `profile` Windows Terminal gives the tab claude.exe's icon, which is
+    the plain console one; with it, the tab takes that profile's icon.
+    """
     if wt:
         # wt splits its command line on ';' into several commands.
-        return [wt, "-w", "0", "new-tab", "-d", cwd, *args[:-1], prompt.replace(";", "\\;")]
-    return args
+        prompt = prompt.replace(";", "\\;")
+    args = [claude, "--session-id", session_id, *([prompt] if prompt else [])]
+    if not wt:
+        return args
+    return [wt, "-w", "0", "new-tab", *(["-p", profile] if profile else []), "-d", cwd, *args]
 
 
-def launch(cwd: str, prompt: str, session_id: str) -> None:
+def launch(cwd: str, prompt: str, session_id: str, wt_profile: str = "") -> None:
     if os.name != "nt":
         raise NotImplementedError("starting a session is only implemented on Windows")
     claude = shutil.which("claude")
     if not claude:
         raise FileNotFoundError("claude is not on PATH")
-    cmd = launch_command(claude, cwd, prompt, session_id, shutil.which("wt"))
+    cmd = launch_command(claude, cwd, prompt, session_id, shutil.which("wt"), wt_profile)
     flags = subprocess.CREATE_NEW_CONSOLE | subprocess.CREATE_NEW_PROCESS_GROUP
     subprocess.Popen(cmd, cwd=cwd, env=child_env(), creationflags=flags,
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -339,6 +360,15 @@ class Queue:
         for a bad or impossible request."""
         action = body.get("action") if isinstance(body, dict) else None
         now = int(time.time() * 1000)
+        if action == "open":
+            # Not a queue item, so it needs neither the lock nor a slot.
+            project = check_folder(body, projects)
+            session_id = str(uuid.uuid4())
+            try:
+                self.start(project["path"], "", session_id)
+            except (OSError, NotImplementedError) as e:
+                raise ValueError(str(e)) from e
+            return {"sessionId": session_id, "cwd": project["path"], "name": project["name"], "startedAt": now}
         with self.lock:
             q = self.load()
             item = {}
@@ -369,7 +399,7 @@ class Queue:
                     q["items"].remove(item)
                     q["items"].insert(0, item)
             else:
-                raise ValueError("action must be add, cancel, first, release or limit")
+                raise ValueError("action must be add, cancel, first, release, limit or open")
             self.step(q)
             self.save(q)
             return item
@@ -438,12 +468,15 @@ def main() -> None:
     ap.add_argument("--max-sessions", type=int, default=4, help="queued work items running at once, all projects together")
     ap.add_argument("--idle-minutes", type=float, default=15,
                     help="a queued session idle this long, with nothing in the background, frees its slot")
+    ap.add_argument("--wt-profile", default="PowerShell",
+                    help='the Windows Terminal profile a new tab takes its icon and colors from; "" for none')
     args = ap.parse_args()
     if "{id}" not in args.prompt:
         sys.exit("--prompt must contain {id}")
     board = args.dir.resolve()
     board.mkdir(parents=True, exist_ok=True)
-    queue = Queue(board, args.prompt, int(args.idle_minutes * 60_000), args.max_sessions)
+    queue = Queue(board, args.prompt, int(args.idle_minutes * 60_000), args.max_sessions,
+                  start=partial(launch, wt_profile=args.wt_profile))
     handler = type("BoardHandler", (Handler,), {"board": board, "port": args.port, "queue": queue})
     try:
         server = Server(("127.0.0.1", args.port), partial(handler, directory=str(board)))

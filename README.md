@@ -101,13 +101,22 @@ Under memory pressure, from 90% RAM or 85% commit charge, the queue holds: no ne
 item starts until both drop below 85% and 80%. Queued items say so. Without a
 fresh memory sample (one from the last 3 minutes) the queue never holds.
 
+To start an empty session instead, click **+** on a project's group header (with
+the board grouped by project) or **new session** next to the queue form. It opens
+`claude` in that folder right away, in a new tab like a queued item, but it isn't
+a queue item: it takes no slot and the queue's limits don't apply. Under memory
+pressure the page asks before it opens one.
+
 Change what a session is started with using `--prompt "/my-skill #{id}"` (keep
 the `#` so the tile can read the number before the skill runs); `--port` and
-`--dir` work as you'd expect.
+`--dir` work as you'd expect. A new tab takes its icon from the Windows Terminal
+profile named by `--wt-profile` (`PowerShell`); without one it gets the plain
+console icon. Started from a Claude session, the server drops the `NO_COLOR=1`
+that Claude's shell sets, so sessions it starts keep their colors.
 
 The projects are the folders that sessions on the board have run in (the repo's
-root when there is one). The form appears once there is at least one. The server
-takes only a work item number and one of those folders, and refuses requests
+root when there is one). The form and the **+** appear once there is at least
+one. The server takes only a work item number and one of those folders, and refuses requests
 from any page but the board itself.
 
 ## What a tile shows

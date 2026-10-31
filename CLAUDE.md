@@ -34,7 +34,11 @@ install it and how to serve the page. This file is for working on it.
   `api/queue`, a queue of work items in `<board>/queue.json`. A thread starts an
   item as an interactive `claude --session-id <uuid> "<prompt>"` when its
   project (a folder that some status file reports) has a free slot, one by
-  default, and frees the slot from that session's status file (`slot_free`). It
+  default, and frees the slot from that session's status file (`slot_free`).
+  The `open` action starts an empty `claude --session-id <uuid>` in a project at
+  once, outside the queue: no slot, no memory hold (the page confirms instead).
+  The page offers it as **+** on a project group and **new session** by the
+  form, matching a group to a project by its sessions' repo root or cwd. It
   takes no free text, checks `Host`, `Origin` and the JSON content type, and
   never answers CORS preflights. Memory pressure in the newest `machine`
   sample holds new starts (`memory_hold`, with hysteresis); the page's strip

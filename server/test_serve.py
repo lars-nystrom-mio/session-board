@@ -3,9 +3,10 @@ import os
 import tempfile
 import time
 import unittest
+import uuid
 from pathlib import Path
 
-from serve import GONE_MS, MACHINE_STALE_MS, START_MS, Queue, advance, check_launch, known_projects, launch_command, memory_hold, same_origin, slot_free
+from serve import GONE_MS, MACHINE_STALE_MS, START_MS, Queue, advance, check_launch, child_env, known_projects, launch_command, memory_hold, same_origin, slot_free
 
 
 def write_session(board: Path, sid: str, **fields) -> None:
@@ -76,8 +77,24 @@ class LaunchCommand(unittest.TestCase):
         cmd = launch_command("claude", "C:\\r", "do 1; then", "sid", "wt")
         self.assertEqual(cmd, ["wt", "-w", "0", "new-tab", "-d", "C:\\r", "claude", "--session-id", "sid", "do 1\\; then"])
 
+    def test_windows_terminal_profile(self):
+        self.assertEqual(launch_command("claude", "C:\\r", "", "sid", "wt", "PowerShell"),
+                         ["wt", "-w", "0", "new-tab", "-p", "PowerShell", "-d", "C:\\r", "claude", "--session-id", "sid"])
+        self.assertEqual(launch_command("claude", "C:\\r", "", "sid", None, "PowerShell"), ["claude", "--session-id", "sid"])
+
     def test_console_without_wt(self):
         self.assertEqual(launch_command("claude", "C:\\r", "deliver 1", "sid", None), ["claude", "--session-id", "sid", "deliver 1"])
+
+    def test_child_env_drops_what_a_session_set(self):
+        env = {"PATH": "p", "CLAUDECODE": "1", "CLAUDE_CODE_ENTRYPOINT": "cli", "NO_COLOR": "1"}
+        self.assertEqual(child_env(env), {"PATH": "p"})
+        # NO_COLOR set by the user, with the server started outside a session, stays.
+        self.assertEqual(child_env({"PATH": "p", "NO_COLOR": "1"}), {"PATH": "p", "NO_COLOR": "1"})
+
+    def test_empty_prompt_passes_no_argument(self):
+        self.assertEqual(launch_command("claude", "C:\\r", "", "sid", None), ["claude", "--session-id", "sid"])
+        self.assertEqual(launch_command("claude", "C:\\r", "", "sid", "wt"),
+                         ["wt", "-w", "0", "new-tab", "-d", "C:\\r", "claude", "--session-id", "sid"])
 
 
 IDLE = 15 * 60_000
@@ -225,6 +242,27 @@ class QueueActions(unittest.TestCase):
     def test_a_stale_sample_never_holds(self):
         self.write_machine(99, 99, at=int(time.time() * 1000) - MACHINE_STALE_MS - 1000)
         self.assertEqual(self.add(1)["state"], "running")
+
+    def test_open_starts_an_empty_session_outside_the_queue(self):
+        self.write_machine(95, 95)  # memory pressure holds the queue, not this
+        self.add(1)
+        opened = self.queue.act({"action": "open", "cwd": self.repo + os.sep}, self.projects)
+        self.assertEqual(self.started, [(self.repo, "", opened["sessionId"])])
+        self.assertEqual(str(uuid.UUID(opened["sessionId"])), opened["sessionId"])
+        self.assertEqual((opened["cwd"], opened["name"]), (self.repo, "repo"))
+        saved = json.loads((self.board / "queue.json").read_text(encoding="utf-8"))
+        self.assertEqual([i["state"] for i in saved["items"]], ["queued"])
+
+    def test_open_refuses_unknown_folders_and_reports_a_failed_start(self):
+        for bad in [{"action": "open"}, {"action": "open", "cwd": "C:\\Windows"}, {"action": "open", "cwd": 1}]:
+            with self.assertRaises(ValueError):
+                self.queue.act(bad, self.projects)
+        def fail(*a):
+            raise FileNotFoundError("claude is not on PATH")
+        self.queue.start = fail
+        with self.assertRaisesRegex(ValueError, "not on PATH"):
+            self.queue.act({"action": "open", "cwd": self.repo}, self.projects)
+        self.assertEqual(self.started, [])
 
     def test_a_failed_start_is_marked_and_frees_the_slot(self):
         def fail(*a):
