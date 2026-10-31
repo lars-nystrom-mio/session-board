@@ -102,8 +102,11 @@
   main { padding: 18px 32px 40px; }
 
   /* The queue: what's running for it, what waits, and what just finished. */
-  .queue { margin-bottom: 16px; display: grid; gap: 2px; font-size: 12.5px; }
-  .queue[hidden] { display: none; }
+  .queue-wrap { margin-bottom: 26px; }
+  .queue-wrap[hidden], .queue[hidden] { display: none; }
+  .queue-wrap .g-bar { margin-bottom: 6px; }
+  .queue-wrap.collapsed { margin-bottom: 10px; }
+  .queue { display: grid; gap: 2px; font-size: 12.5px; }
   .q {
     display: grid; grid-template-columns: 74px minmax(0, 160px) 70px minmax(0, 1fr) auto; gap: 12px; align-items: baseline;
     padding: 4px 8px; border-radius: 6px; color: var(--muted);
@@ -447,7 +450,10 @@
   <div class="status" id="status">connecting…</div>
 </header>
 <main>
-  <section class="queue" id="queue" aria-label="Queue" hidden></section>
+  <section class="queue-wrap" id="queue-wrap" hidden>
+    <div class="g-bar"><button class="g-head" id="queue-head" aria-controls="queue"></button></div>
+    <div class="queue" id="queue" aria-label="Queue"></div>
+  </section>
   <div id="groups"></div>
   <div id="empty"></div>
   <details class="past" id="past" hidden>
@@ -1176,6 +1182,8 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDrawe
 // form and the queue stay hidden.
 let queueServed = null  // unknown until the first answer
 let queue = null
+let queueCollapsed = false
+try { queueCollapsed = !!localStorage.getItem('sessionBoard.queueCollapsed') } catch {}
 const QUEUE_SHOW_ENDED_MS = 6 * 3600_000  // finished items stay listed this long
 const QUEUE_SHOW_ENDED = 4
 const ENDED_BY = {
@@ -1275,11 +1283,31 @@ function renderQueue() {
     ])),
     ...ended.map((i) => row(i, 'ended', esc(i.error || ENDED_BY[i.endedBy] || i.endedBy || i.state) + ` · ${clock(i.endedAt)}`, [])),
   ].join('')
+  const wrap = $('queue-wrap')
+  wrap.hidden = !html
+  wrap.classList.toggle('collapsed', queueCollapsed)
+  const failed = ended.filter((i) => i.state === 'failed').length
+  const bits = [[running.length, 'run', 'running'], [waiting.length, '', 'queued'], [ended.length - failed, '', 'finished'], [failed, 'you', 'failed']]
+    .map(([n, c, w]) => (n ? `<span class="${c}"><b>${n}</b> ${w}</span>` : '')).join('')
+  const head = `<svg class="chev" viewBox="0 0 10 10" aria-hidden="true"><path d="M3.5 2 6.5 5 3.5 8"/></svg>
+    <span class="g-name">Queue</span>
+    <span class="g-count">${running.length + waiting.length}</span>
+    ${queue.held ? '<span class="g-extra" style="color:var(--warn)">held</span>' : ''}
+    <span class="summary">${bits}</span>`
+  const h = $('queue-head')
+  if (h.dataset.html !== head) { h.innerHTML = head; h.dataset.html = head }
+  h.setAttribute('aria-expanded', String(!queueCollapsed))
   const el = $('queue')
-  el.hidden = !html
+  el.hidden = queueCollapsed
   if (el.dataset.html !== html) { el.innerHTML = html; el.dataset.html = html; tick() }
   renderMemory()
 }
+
+$('queue-head').addEventListener('click', () => {
+  queueCollapsed = !queueCollapsed
+  try { localStorage.setItem('sessionBoard.queueCollapsed', queueCollapsed ? '1' : '') } catch {}
+  renderQueue()
+})
 
 async function postQueue(body) {
   const res = await fetch('api/queue', {
