@@ -369,7 +369,7 @@ describe('background tasks', () => {
 describe('board_status', () => {
   test('done and working set and clear the flag', async () => {
     const board = freshBoard('s1', '/x', 0)
-    boardStatus(board, { status: 'done', note: 'PR !12 merged' }, 5)
+    expect(boardStatus(board, { status: 'done', note: 'PR !12 merged' }, 5)).toMatch(/Follow-ups do not undo it/)
     expect(board.done).toEqual({ at: 5, note: 'PR !12 merged' })
     expect(boardStatus(board, { status: 'maybe' }, 6)).toMatch(/nothing recorded/)
     expect(board.done?.at).toBe(5)
