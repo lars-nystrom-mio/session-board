@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'claude-code/testing'
-import { boardStatus, pruneShells, shellReported, shellToolDone, SHELL_MAX_MS, addPrs, adoOrgOf, cronFired, cronToolDone, nextCronMatch, pruneCrons, CRON_EXPIRY_MS, WAKEUP_ID, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, childLabel, deriveState, freshBoard, memoryOf, parseMachine, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, summarize, toolLabel, trimAgents, workItemOf, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
+import { boardStatus, plannedWork, pruneShells, shellReported, shellToolDone, SHELL_MAX_MS, addPrs, adoOrgOf, cronFired, cronToolDone, nextCronMatch, pruneCrons, CRON_EXPIRY_MS, WAKEUP_ID, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, childLabel, deriveState, freshBoard, memoryOf, parseMachine, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, summarize, toolLabel, trimAgents, workItemOf, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
 
 describe('summaries', () => {
   test('a tool call becomes one short line', async () => {
@@ -376,4 +376,54 @@ describe('board_status', () => {
     boardStatus(board, { status: 'working' }, 7)
     expect(board.done).toBe(null)
   })
+})
+
+describe('planned work', () => {
+  const t = 10 * 3600_000
+  const live = (id: string, workItem: string | null, extra: Record<string, unknown> = {}) =>
+    ({ ...freshBoard(id, 'C:\\Workspace\\Kanban', t), workItem, updatedAt: t - 5_000, state: 'running', ...extra })
+
+  test('queued and running items come first by project, live sessions on work items join them', async () => {
+    const queue = {
+      limits: {},
+      items: [
+        { id: 'a', workItem: '101', cwd: 'C:\\Workspace\\Kanban', name: 'Kanban', state: 'queued', queuedAt: t - 30 * 60_000 },
+        { id: 'b', workItem: '102', cwd: 'C:\\Workspace\\Kanban', name: 'Kanban', state: 'running', startedAt: t - 2 * 3600_000, sessionId: 's1' },
+        { id: 'c', workItem: '103', cwd: 'C:\\Workspace\\Edi', name: 'Edi', state: 'done' },
+      ],
+    }
+    const boards = [
+      live('s1', '102'), // the queue's own session: listed once
+      live('s2', '200', { tabTitle: 'Fix capture' }),
+      live('s3', '201', { updatedAt: t - 120_000 }), // gone
+      live('s4', '202', { state: 'ended' }),
+      live('s5', null),
+      live('me', '203', { done: { at: t, note: '' } }),
+      null,
+    ]
+    const text = plannedWork(queue, boards, 'me', t)
+    expect(text).toBe([
+      'Kanban (C:\\Workspace\\Kanban)',
+      '  #102  running from the queue, started 2 h ago',
+      '  #200  in progress in session "Fix capture"',
+      '  #203  finished, not closed yet in this session',
+      '  #101  queued, added 30 min ago',
+    ].join('\n'))
+  })
+
+  test('a project filter matches name or path, and says when nothing matches', async () => {
+    const queue = { items: [{ workItem: '101', cwd: 'C:\\Workspace\\Kanban', name: 'Kanban', state: 'queued' }] }
+    expect(plannedWork(queue, [], '', t, 'kanban')).toContain('#101')
+    expect(plannedWork(queue, [], '', t, 'C:/Workspace/Kanban/')).toContain('#101')
+    expect(plannedWork(queue, [], '', t, 'Edi')).toBe('Nothing queued or in progress on the board for Edi.')
+    expect(plannedWork(null, [], '', t)).toMatch(/^Nothing planned on the board: there is no queue yet/)
+    expect(plannedWork('garbage', [{}], '', t)).toBe('Nothing queued or in progress on the board.')
+  })
+})
+
+test('the board answers its own board_queue tool', async ($) => {
+  const result = await $.tool.call({ tool: 'mcp__session-board__board_queue' })
+  expect(result.deny).toBe(undefined)
+  // The kit has no env to find the board folder in; the tool still answers.
+  expect(String(result.result)).toMatch(/Nothing|#\d+|not available/)
 })

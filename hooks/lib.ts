@@ -726,6 +726,95 @@ export function boardStatus(board: Board, input: Record<string, unknown>, now: n
   return 'status must be "done" or "working"; nothing recorded.'
 }
 
+export const BOARD_QUEUE_TOOL = {
+  name: 'board_queue',
+  description:
+    "Lists the work already planned on the session board (the user's dashboard of Claude Code sessions): " +
+    'Azure DevOps work items waiting in its queue or running from it, and work items that other live sessions ' +
+    'are on. Each line gives the work item number, the project, and its state. Use it when planning or ' +
+    'refining work, to see what is already queued or in progress before proposing or starting more. ' +
+    'It gives numbers only: look up titles in Azure DevOps if you need them. Read-only.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      project: {
+        type: 'string',
+        description: 'Only this project: its folder name or full path. Leave out for all projects.',
+      },
+    },
+  },
+}
+
+const LIVE_MS = 60_000 // a status file this old belongs to a session that is gone (GONE_MS in serve.py)
+
+type PlannedLine = { workItem: string; project: string; cwd: string; text: string; order: number }
+
+function ago(ms: number): string {
+  const min = Math.max(0, Math.round(ms / 60_000))
+  if (min < 60) return `${min} min ago`
+  const h = Math.round(min / 60)
+  return h < 48 ? `${h} h ago` : `${Math.round(h / 24)} d ago`
+}
+
+const pathKey = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+
+// What board_queue answers: `queue` is queue.json as read (anything, or null if
+// there's none), `boards` the status files, `self` the asking session's id.
+export function plannedWork(queue: unknown, boards: unknown[], self: string, now: number, project = ''): string {
+  const lines: PlannedLine[] = []
+  const fromQueue = new Set<string>()
+  const items = queue && typeof queue === 'object' && Array.isArray((queue as { items?: unknown }).items)
+    ? ((queue as { items: unknown[] }).items)
+    : []
+  for (const raw of items) {
+    if (!raw || typeof raw !== 'object') continue
+    const i = raw as Record<string, unknown>
+    const workItem = str(i.workItem)
+    const cwd = str(i.cwd)
+    if (!workItem || !cwd) continue
+    const name = str(i.name) || basename(cwd)
+    if (i.state === 'queued') {
+      const at = typeof i.queuedAt === 'number' ? `, added ${ago(now - i.queuedAt)}` : ''
+      lines.push({ workItem, project: name, cwd, order: 1, text: `queued${at}` })
+    } else if (i.state === 'running') {
+      if (str(i.sessionId)) fromQueue.add(str(i.sessionId))
+      const at = typeof i.startedAt === 'number' ? `, started ${ago(now - i.startedAt)}` : ''
+      lines.push({ workItem, project: name, cwd, order: 0, text: `running from the queue${at}` })
+    }
+  }
+  for (const raw of boards) {
+    if (!raw || typeof raw !== 'object') continue
+    const b = raw as Partial<Board>
+    const workItem = str(b.workItem)
+    const cwd = str(b.cwd)
+    if (!workItem || !cwd || !b.sessionId || fromQueue.has(b.sessionId)) continue
+    if (b.state === 'ended' || typeof b.updatedAt !== 'number' || now - b.updatedAt > LIVE_MS) continue
+    const name = b.repo?.name || b.project || basename(cwd)
+    const who = b.sessionId === self ? 'this session' : b.tabTitle ? `session "${clip(b.tabTitle, 60)}"` : 'a session'
+    const state = b.done ? 'finished, not closed yet' : b.state === 'waiting' ? 'waiting for the user' : 'in progress'
+    lines.push({ workItem, project: name, cwd, order: 0, text: `${state} in ${who}` })
+  }
+
+  const want = project.trim()
+  const shown = want
+    ? lines.filter((l) => l.project.toLowerCase() === want.toLowerCase() || basename(l.cwd).toLowerCase() === want.toLowerCase() || pathKey(l.cwd) === pathKey(want))
+    : lines
+  if (!shown.length) {
+    const where = want ? ` for ${want}` : ''
+    return queue === null && !want
+      ? 'Nothing planned on the board: there is no queue yet and no live session is on a work item.'
+      : `Nothing queued or in progress on the board${where}.`
+  }
+  const byProject = new Map<string, PlannedLine[]>()
+  for (const l of shown) byProject.set(l.cwd, [...(byProject.get(l.cwd) ?? []), l])
+  const out: string[] = []
+  for (const [cwd, group] of byProject) {
+    out.push(`${group[0]!.project} (${cwd})`)
+    for (const l of group.sort((a, b) => a.order - b.order)) out.push(`  #${l.workItem}  ${l.text}`)
+  }
+  return out.join('\n')
+}
+
 export function pushEvent(board: Board, event: BoardEvent): void {
   board.events.push(event)
   if (board.events.length > MAX_EVENTS) board.events.splice(0, board.events.length - MAX_EVENTS)

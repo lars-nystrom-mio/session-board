@@ -15,6 +15,10 @@ install it and how to serve the page. This file is for working on it.
   and the queue use the newest sample any session wrote.
   It runs `powershell.exe` a second time for `az repos pr show`, to look up
   which repo a PR named only by number is in.
+  It also registers `board_queue` (deferred, read-only) for planning sessions.
+  It reads `queue.json` and the status files through `$.fs`, not through the
+  server, and `plannedWork` in `lib.ts` formats the answer. A session counts
+  as live on the same 60 s rule as `GONE_MS` in `serve.py`.
 - `hooks/lib.ts`: the status file's shape (`Board`) and pure helpers. Keep
   anything without `$` here so the tests can call it.
 - `hooks/board.test.ts`: tests, run by `claude plugin test .`.
