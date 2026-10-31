@@ -132,15 +132,29 @@
      is one section with its header hidden. */
   .group + .group { margin-top: 26px; }
   .group.collapsed + .group, .group + .group.collapsed { margin-top: 10px; }
+  /* The bar holds the header, a button, and the "+" beside it: a button can't hold another. */
+  .g-bar {
+    display: flex; align-items: center; gap: 4px; margin-bottom: 12px;
+    border-bottom: 1px solid var(--line); border-radius: 6px 6px 0 0;
+  }
+  .g-bar[hidden] { display: none; }
+  .collapsed .g-bar { margin-bottom: 0; }
   .g-head {
-    display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; width: 100%; margin-bottom: 12px;
-    padding: 4px 4px 7px; background: none; border: 0; border-bottom: 1px solid var(--line); border-radius: 6px 6px 0 0;
+    display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; flex: 1; min-width: 0;
+    padding: 4px 4px 7px; background: none; border: 0; border-radius: 6px 6px 0 0;
     text-align: left; cursor: pointer; color: var(--muted);
   }
-  .g-head[hidden] { display: none; }
   .g-head:hover { color: var(--text); }
-  .g-head:focus-visible { outline: 2px solid var(--run); outline-offset: 1px; }
-  .collapsed .g-head { margin-bottom: 0; }
+  .g-head:focus-visible, .g-new:focus-visible { outline: 2px solid var(--run); outline-offset: 1px; }
+  .g-new {
+    flex: none; width: 22px; height: 22px; padding: 0; margin-bottom: 3px; display: grid; place-items: center;
+    background: none; border: 1px solid transparent; border-radius: 6px; color: var(--faint); cursor: pointer;
+  }
+  .g-new[hidden] { display: none; }
+  .g-new:hover { color: var(--run); border-color: var(--line); background: var(--card); }
+  .g-new:disabled { cursor: default; color: var(--faint); }
+  .g-new svg { width: 10px; height: 10px; }
+  .g-new path { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
   .g-head .chev {
     width: 10px; height: 10px; flex: none; align-self: center; color: var(--faint);
     transform: rotate(90deg); transition: transform .15s ease-out;
@@ -155,7 +169,7 @@
   /* A collapsed group hides its tiles, so it carries their alert instead. */
   .g-dot { display: none; width: 7px; height: 7px; border-radius: 50%; flex: none; align-self: center; background: var(--you); }
   .collapsed.you .g-dot { display: block; animation: pulse .9s ease-in-out infinite; }
-  .collapsed.you .g-head {
+  .collapsed.you .g-bar {
     border-bottom-color: var(--you);
     background: linear-gradient(to top, color-mix(in srgb, var(--you) 9%, transparent), transparent);
   }
@@ -404,6 +418,7 @@
     <select id="launch-max" aria-label="Queued sessions at once in this project" title="queued sessions at once in this project"></select>
     <input id="launch-id" aria-label="Work item number" placeholder="#1234" inputmode="numeric" pattern="#?\d{1,9}" required>
     <button id="launch-go">queue</button>
+    <button type="button" id="launch-new" title="open an empty session in this project now, in a new terminal">new session</button>
     <output id="launch-out" aria-live="polite"></output>
   </form>
   <div class="view">
@@ -897,16 +912,25 @@ function render() {
     if (!sec) {
       const el = document.createElement('section')
       el.className = 'group'
-      el.innerHTML = '<button class="g-head"></button><div class="grid"></div>'
-      sec = { el, head: el.firstChild, grid: el.lastChild, html: '' }
+      el.innerHTML = `<div class="g-bar"><button class="g-head"></button><button class="g-new" hidden>
+        <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M5 1v8M1 5h8"/></svg></button></div><div class="grid"></div>`
+      const bar = el.firstChild
+      sec = { el, bar, head: bar.firstChild, add: bar.lastChild, grid: el.lastChild, html: '' }
       sec.head.dataset.groupToggle = id
       sections.set(id, sec)
     }
     const isCollapsed = groupBy !== 'none' && !!collapsed[id]
     sec.el.classList.toggle('collapsed', isCollapsed)
     sec.el.classList.toggle('you', countIn(g.list, 'waiting') > 0)
-    sec.head.hidden = groupBy === 'none'
+    sec.bar.hidden = groupBy === 'none'
     sec.head.setAttribute('aria-expanded', String(!isCollapsed))
+    const project = groupBy === 'project' ? projectFolder(g.list) : null
+    sec.add.hidden = !project
+    if (project && sec.add.dataset.newSession !== project.path) {
+      sec.add.dataset.newSession = project.path
+      sec.add.title = `new session in ${project.name}`
+      sec.add.setAttribute('aria-label', sec.add.title)
+    }
     sec.grid.hidden = isCollapsed
     const html = groupBy === 'none' ? '' : groupHeadHtml(g)
     if (html !== sec.html) { sec.head.innerHTML = html; sec.html = html }
@@ -1123,6 +1147,8 @@ document.addEventListener('click', async (e) => {
   if (sort) return setSort(sort.dataset.sort)
   const groupBtn = e.target.closest('[data-group-by]')
   if (groupBtn) return setGroup(groupBtn.dataset.groupBy)
+  const add = e.target.closest('[data-new-session]')
+  if (add) return void openSession(add.dataset.newSession, add)
   const head = e.target.closest('[data-group-toggle]')
   if (head) return toggleGroup(head.dataset.groupToggle)
   if (e.target.closest('[data-memory]')) return openDrawer(MEMORY_DRAWER)
@@ -1162,6 +1188,37 @@ async function loadQueue() {
   $('launch-go').title = `queues claude "${queue.prompt}"; it starts in a new terminal when the project has a free slot`
   $('launch').hidden = !queue.projects.length
   renderQueue()
+  // The "+" on a project's group needs the server's list of projects.
+  if (groupBy === 'project' && queue.projects.length !== projectsShown) { projectsShown = queue.projects.length; render() }
+}
+let projectsShown = 0
+
+// The server's project for a group of sessions, by the folder they report, or null.
+const folderKey = (p) => p.replace(/[\\/]+$/, '').replace(/\//g, '\\').toLowerCase()
+function projectFolder(list) {
+  if (!queueServed || !queue) return null
+  for (const s of list) {
+    const folder = s.repo?.root || s.cwd
+    const p = folder && queue.projects.find((x) => folderKey(x.path) === folderKey(folder))
+    if (p) return p
+  }
+  return null
+}
+
+// Opens an empty session in a project now: not a queue item, so it takes no slot.
+async function openSession(cwd, button) {
+  const name = queue?.projects.find((p) => p.path === cwd)?.name || cwd
+  if (queue?.held && !confirm(`Memory is high (${queue.held}). Open a session in ${name} anyway?`)) return
+  button.disabled = true
+  say(`opening a session in ${name}…`)
+  try {
+    await postQueue({ action: 'open', cwd })
+    say(`opened a session in ${name}`)
+  } catch (err) {
+    say(err.message, true)
+  } finally {
+    button.disabled = false
+  }
 }
 
 // The selected project's limit: how many of its queued items run at once.
@@ -1256,6 +1313,7 @@ $('launch').addEventListener('submit', async (e) => {
     go.disabled = false
   }
 })
+$('launch-new').addEventListener('click', () => openSession($('launch-cwd').value, $('launch-new')))
 $('queue').addEventListener('click', async (e) => {
   const b = e.target.closest('[data-queue]')
   if (!b) return

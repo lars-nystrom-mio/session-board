@@ -10,6 +10,7 @@ GET  api/queue -> {"prompt", "maxSessions", "held", "projects": [{"path", "name"
 POST api/queue {"action": "add", "workItem": "1234", "cwd": "<a path from projects>"}
                {"action": "cancel" | "first" | "release", "id": "<item id>"}
                {"action": "limit", "cwd": "<a path from projects>", "max": 2}
+               {"action": "open", "cwd": "<a path from projects>"}
 
 An item starts when its project has a free slot (one by default, as two
 sessions in one working copy get in each other's way) and fewer than
@@ -24,6 +25,10 @@ limits, not sessions started some other way. While the newest memory sample a
 session wrote shows RAM or commit charge too high, nothing new starts ("held").
 The queue is kept in queue.json in
 the board folder, so a restart picks it up.
+
+"open" starts an empty `claude --session-id <id>` in a project right away. It
+is not a queue item: it takes no slot, and memory pressure doesn't hold it (the
+page asks first).
 
 Only a work item number and one of the projects that sessions have reported can
 be sent: the server never runs text from a request.
@@ -126,14 +131,20 @@ def check_project(body, projects: list[dict]) -> dict:
     return match[0]
 
 
+def check_folder(body, projects: list[dict]) -> dict:
+    """The project a request to start a session names, if its folder still exists."""
+    project = check_project(body, projects)
+    if not os.path.isdir(project["path"]):
+        raise ValueError(f"{project['path']} no longer exists")
+    return project
+
+
 def check_launch(body, projects: list[dict]) -> tuple[str, str]:
     """The work item and folder of a request to queue one; raises ValueError otherwise."""
-    project = check_project(body, projects)
+    project = check_folder(body, projects)
     item = str(body.get("workItem", "")).strip().lstrip("#")
     if not WORK_ITEM.match(item):
         raise ValueError("workItem must be a work item number")
-    if not os.path.isdir(project["path"]):
-        raise ValueError(f"{project['path']} no longer exists")
     return item, project["path"]
 
 
@@ -248,11 +259,12 @@ def child_env() -> dict:
 
 
 def launch_command(claude: str, cwd: str, prompt: str, session_id: str, wt: str | None) -> list[str]:
-    args = [claude, "--session-id", session_id, prompt]
+    """The command that opens a session; an empty prompt opens an empty one."""
     if wt:
         # wt splits its command line on ';' into several commands.
-        return [wt, "-w", "0", "new-tab", "-d", cwd, *args[:-1], prompt.replace(";", "\\;")]
-    return args
+        prompt = prompt.replace(";", "\\;")
+    args = [claude, "--session-id", session_id, *([prompt] if prompt else [])]
+    return [wt, "-w", "0", "new-tab", "-d", cwd, *args] if wt else args
 
 
 def launch(cwd: str, prompt: str, session_id: str) -> None:
@@ -339,6 +351,15 @@ class Queue:
         for a bad or impossible request."""
         action = body.get("action") if isinstance(body, dict) else None
         now = int(time.time() * 1000)
+        if action == "open":
+            # Not a queue item, so it needs neither the lock nor a slot.
+            project = check_folder(body, projects)
+            session_id = str(uuid.uuid4())
+            try:
+                self.start(project["path"], "", session_id)
+            except (OSError, NotImplementedError) as e:
+                raise ValueError(str(e)) from e
+            return {"sessionId": session_id, "cwd": project["path"], "name": project["name"], "startedAt": now}
         with self.lock:
             q = self.load()
             item = {}
@@ -369,7 +390,7 @@ class Queue:
                     q["items"].remove(item)
                     q["items"].insert(0, item)
             else:
-                raise ValueError("action must be add, cancel, first, release or limit")
+                raise ValueError("action must be add, cancel, first, release, limit or open")
             self.step(q)
             self.save(q)
             return item
