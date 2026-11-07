@@ -27,7 +27,10 @@ install it and how to serve the page. This file is for working on it.
   keys tiles by session id, and group sections (project or work item) by
   group, so CSS animations survive polls. View choices live in `localStorage`. It shows the
   **queue** form and list only when `GET api/queue` answers, so it still works
-  under `python -m http.server`.
+  under `python -m http.server`. It also lists `sandboxed/`, status files that
+  sessions in a sandbox write through a mount. Those are untrusted: `defang()`
+  cleans each one before anything renders it, because the page puts some
+  fields into HTML unescaped. The server never reads `sandboxed/`.
 - `server/serve.py`: optional stdlib server for the board folder, but `/`
   comes from `dashboard/index.html` in the repo. It turns off `SO_REUSEADDR` on
   Windows, where it would let it bind a port another server holds. It adds

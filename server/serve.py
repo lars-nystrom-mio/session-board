@@ -32,6 +32,12 @@ page asks first).
 
 Only a work item number and one of the projects that sessions have reported can
 be sent: the server never runs text from a request.
+
+Projects, slots and memory samples come from `sessions/` only, the status files
+of sessions on this PC. Sessions in a sandbox write to `sandboxed/`, which the
+page shows but this server never reads: a sandbox could write anything there,
+such as a host folder as its project, and the queue would open an unsandboxed
+claude in it.
 """
 
 import argparse

@@ -185,6 +185,20 @@ A missing or broken file leaves the defaults.
 The work item is taken from the skill's arguments (`deliver 1234` →
 `#1234`) or a `#1234` in the prompt.
 
+## Sessions in a sandbox
+
+A session in a Docker sandbox (`sbx`) can show up on the board on your PC too.
+Install the plugin in the sandbox, mount the board's `sandboxed/` folder (create
+it first) at `<dir>/sessions` inside the sandbox, and set `SESSION_BOARD_DIR` to
+`<dir>` there. Mount only `sandboxed/`, never the board folder or `sessions/`.
+
+The board treats `sandboxed/` as untrusted, since the sandbox can write anything
+there. The page strips every string of the characters that could inject markup,
+keeps only `https` PR links, drops memory samples and ignores a file that takes
+the id of a session on this PC. Its tiles carry a **sandbox** badge and offer no
+`claude --resume` line. The server never reads `sandboxed/`, so a sandbox can't
+add a project, free a slot or hold the queue.
+
 ## Settings
 
 | Environment variable | Effect |

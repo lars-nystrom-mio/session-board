@@ -6,7 +6,7 @@ import unittest
 import uuid
 from pathlib import Path
 
-from serve import GONE_MS, MACHINE_STALE_MS, START_MS, Queue, advance, check_launch, child_env, known_projects, launch_command, memory_hold, same_origin, slot_free
+from serve import GONE_MS, MACHINE_STALE_MS, START_MS, Queue, advance, check_launch, child_env, known_projects, launch_command, memory_hold, newest_machine, same_origin, slot_free
 
 
 def write_session(board: Path, sid: str, **fields) -> None:
@@ -31,6 +31,17 @@ class KnownProjects(unittest.TestCase):
     def test_no_sessions_folder(self):
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(known_projects(Path(d)), [])
+
+    def test_sandboxed_sessions_are_never_projects(self):
+        with tempfile.TemporaryDirectory() as d:
+            board = Path(d)
+            (board / "sandboxed").mkdir()
+            (board / "sandboxed" / "x.json").write_text(json.dumps(
+                {"cwd": d, "repo": {"root": d, "name": "host"}, "updatedAt": 9,
+                 "machine": {"at": int(time.time() * 1000), "ramMb": 99, "ramTotalMb": 100, "commitMb": 99, "commitLimitMb": 100}}),
+                encoding="utf-8")
+            self.assertEqual(known_projects(board), [])
+            self.assertIsNone(newest_machine(board, int(time.time() * 1000)))
 
 
 class CheckLaunch(unittest.TestCase):

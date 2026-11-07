@@ -230,6 +230,8 @@
   .s-waiting .tab { border-color: color-mix(in srgb, var(--you) 55%, var(--line)); }
   .project { flex: none; max-width: 45%; }
   .branch { flex: 1 1 0; }
+  /* A session in a sandbox: its tile comes from a file the sandbox wrote. */
+  .sbx { flex: none; padding: 0 6px; border: 1px dashed var(--muted); border-radius: 5px; font-size: 10.5px; color: var(--muted); }
   .since { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
   .s-waiting .since { color: var(--you); }
 
@@ -522,25 +524,70 @@ async function fetchText(url) {
   return res.text()
 }
 
-// python -m http.server serves an HTML index for directories; read its links.
+// Sessions in a sandbox write to sandboxed/, the only board folder their sandbox
+// mounts. Anything in there may be crafted, so each file goes through defang()
+// and can't take the id of a session on this PC. The server never reads it.
 async function loadSessions() {
+  const [own, boxed] = await Promise.all([loadFolder('sessions/'), loadFolder('sandboxed/')])
+  const ids = new Set(own.map((b) => b.sessionId))
+  return [...own, ...boxed.map(defang).filter((b) => b && !ids.has(b.sessionId))]
+}
+
+const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const NUMBER_KEYS = new Set(['startedAt', 'updatedAt', 'stateSince', 'promptAt', 'at', 'since', 'until', 't',
+  'turns', 'costUsd', 'percent', 'tokens', 'window', 'nextAt', 'firedAt', 'endedAt', 'createdAt', 'offsetMs', 'number'])
+const LIST_KEYS = ['prs', 'tools', 'agents', 'events', 'crons', 'shells']
+const TEXT_KEYS = ['cwd', 'project', 'branch', 'tabTitle', 'model', 'prompt', 'workItem', 'activeSkill', 'endReason']
+
+// A status file from a sandbox, made safe to render, or null. The page puts some
+// fields into HTML unescaped (numbers, states, classes), so every string loses
+// the characters that could open a tag or leave an attribute, numbers are
+// numbers, and the shapes the page relies on are there. PR links must be https.
+// The memory samples are dropped: they would describe the sandbox, not this PC.
+function defang(raw) {
+  const clean = (v, key) => {
+    if (NUMBER_KEYS.has(key)) return typeof v === 'number' && Number.isFinite(v) ? v : null
+    if (typeof v === 'string') return v.replace(/[<>"'`&\\]/g, '')
+    if (Array.isArray(v)) return v.map((x) => clean(x))
+    if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [clean(k), clean(x, k)]))
+    return typeof v === 'number' || typeof v === 'boolean' || v === null ? v : null
+  }
+  const b = clean(raw)
+  if (!b || typeof b !== 'object' || Array.isArray(b) || !SESSION_ID.test(b.sessionId)) return null
+  for (const k of LIST_KEYS) b[k] = (Array.isArray(b[k]) ? b[k] : []).filter((x) => x && typeof x === 'object')
+  for (const k of TEXT_KEYS) if (typeof b[k] !== 'string') b[k] = null
+  for (const k of ['repo', 'waiting', 'skill', 'context', 'cache', 'done']) {
+    if (!b[k] || typeof b[k] !== 'object' || Array.isArray(b[k])) b[k] = null
+  }
+  if (!(b.state in STATE_WORD)) b.state = 'idle'
+  for (const k of ['startedAt', 'updatedAt', 'stateSince', 'turns']) b[k] ??= 0
+  b.cwd ??= ''
+  b.prs = b.prs.filter((p) => typeof p.url === 'string' && p.url.startsWith('https://'))
+  delete b.memory
+  delete b.machine
+  b.sandboxed = true
+  return b
+}
+
+// python -m http.server serves an HTML index for directories; read its links.
+async function loadFolder(dir) {
   let listing
   try {
-    listing = await fetchText('sessions/')
+    listing = await fetchText(dir)
   } catch (err) {
     if (/HTTP 404/.test(err.message)) return []
     throw err
   }
   const doc = new DOMParser().parseFromString(listing, 'text/html')
   const files = [...doc.querySelectorAll('a')]
-    .map((a) => decodeURIComponent(a.getAttribute('href')))
-    .filter((h) => h.endsWith('.json'))
+    .map((a) => dir + decodeURIComponent(a.getAttribute('href')))
+    .filter((h) => h.endsWith('.json') && !h.slice(dir.length).includes('/'))
   const boards = await Promise.all(files.map(async (f) => {
     if (endedCache.has(f)) return endedCache.get(f)
     const quiet = quietCache.get(f)
     if (quiet && Date.now() < quiet.until) return quiet.board
     try {
-      const board = JSON.parse(await fetchText('sessions/' + encodeURIComponent(f)))
+      const board = JSON.parse(await fetchText(dir + encodeURIComponent(f.slice(dir.length))))
       const age = Date.now() - board.updatedAt
       if (board.state === 'ended') endedCache.set(f, board)
       else if (age > HIDE_AFTER_MS) quietCache.set(f, { board, until: Date.now() + RECHECK_GONE_MS })
@@ -784,6 +831,7 @@ function tileHtml(s) {
     <div class="t-top">
       <span class="state-dot"></span>
       <span class="project">${esc(projectOf(s))}</span>
+      ${s.sandboxed ? '<span class="sbx" title="runs in a sandbox; what this tile shows comes from the sandbox">sandbox</span>' : ''}
       ${s.tabTitle ? `<span class="tab" title="terminal tab: ${esc(s.tabTitle)}">${esc(s.tabTitle)}</span>` : ''}
       ${s.branch ? `<span class="branch">${esc(s.branch)}</span>` : ''}
       <span class="since">${stale ? `no heartbeat ${live(s.updatedAt)}` : live(s.stateSince, STATE_WORD[s.state] + ' ')}</span>
@@ -1069,7 +1117,9 @@ function drawerHtml(s) {
     ${s.cache ? `<dt>prompt cache</dt><dd>${cacheDrawerText(s)}</dd>` : ''}
     <dt>session id</dt><dd>${esc(s.sessionId)}</dd>
   </dl>
-  <button class="copy" data-copy="claude --resume ${esc(s.sessionId)}">copy  claude --resume ${esc(s.sessionId.slice(0, 8))}…</button>`)
+  ${s.sandboxed
+    ? '<p class="note">Runs in a sandbox: resume it there, not on this PC.</p>'
+    : `<button class="copy" data-copy="claude --resume ${esc(s.sessionId)}">copy  claude --resume ${esc(s.sessionId.slice(0, 8))}…</button>`}`)
 
   if (s.memory) {
     const m = s.memory
