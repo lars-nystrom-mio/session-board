@@ -5,6 +5,23 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Session Board</title>
 <link rel="icon" id="favicon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='7'%20fill='%2314151b'/%3E%3Crect%20x='5'%20y='5'%20width='10'%20height='10'%20rx='2.5'%20fill='%238be9fd'/%3E%3Crect%20x='17'%20y='5'%20width='10'%20height='10'%20rx='2.5'%20fill='%23bd93f9'/%3E%3Crect%20x='5'%20y='17'%20width='10'%20height='10'%20rx='2.5'%20fill='%2350fa7b'/%3E%3Crect%20x='17'%20y='17'%20width='10'%20height='10'%20rx='2.5'%20fill='%23868ba0'/%3E%3C/svg%3E">
+<script>
+  // Set the theme before the first paint, so a light board doesn't flash dark.
+  // themePref is the choice (dark by default, or light, or auto); theme is what
+  // the CSS reads, with auto resolved from the OS and kept in step with it.
+  {
+    const root = document.documentElement
+    const osLight = matchMedia('(prefers-color-scheme: light)')
+    const apply = () => {
+      const p = root.dataset.themePref
+      root.dataset.theme = p === 'auto' ? (osLight.matches ? 'light' : 'dark') : p
+    }
+    try { root.dataset.themePref = localStorage.getItem('sessionBoard.theme') || 'dark' } catch { root.dataset.themePref = 'dark' }
+    apply()
+    osLight.addEventListener('change', apply)
+    window.applyTheme = apply
+  }
+</script>
 <style>
   :root {
     --bg: #14151b;
@@ -20,7 +37,31 @@
     --warn: #ffb86c;
     --you: #ff79c6;
     --bg-agent: #bd93f9;
+    --scrim: rgba(5, 6, 10, .55);
+    --lift: none;
     --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color-scheme: dark;
+  }
+  /* Light, for a bright room: the same hues as dark, deepened so text in an
+     accent keeps 4.5:1 on every surface, the tinted pills on a hovered tile
+     included. White tiles on a pale page need a soft shadow to lift off it. */
+  :root[data-theme="light"] {
+    --bg: #f4f5f8;
+    --panel: #ffffff;
+    --card: #ffffff;
+    --card-hover: #eef0f5;
+    --line: #d9dce5;
+    --text: #1c1e26;
+    --muted: #4c5265;
+    --faint: #5a6072;
+    --run: #1060b8;  /* blue, not dark's cyan: deepened cyan reads as the idle green */
+    --ok: #166428;
+    --warn: #924300;
+    --you: #a8124f;
+    --bg-agent: #6a32c9;
+    --scrim: rgba(20, 22, 30, .35);
+    --lift: 0 1px 2px rgba(20, 22, 30, .06), 0 2px 8px -2px rgba(20, 22, 30, .08);
+    color-scheme: light;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; }
@@ -184,7 +225,7 @@
   .tile {
     position: relative; overflow: hidden; display: block; width: 100%; text-align: left;
     cursor: pointer; background: var(--card); border: 1px solid var(--line); border-radius: 12px;
-    padding: 14px 14px 12px; animation: enter .35s ease both;
+    padding: 14px 14px 12px; animation: enter .35s ease both; box-shadow: var(--lift);
     transition: background .15s, border-color .3s, box-shadow .3s, opacity .3s;
   }
   .tile:hover { background: var(--card-hover); }
@@ -326,7 +367,7 @@
   .row .w { font-family: var(--mono); font-size: 11px; color: var(--faint); white-space: nowrap; }
 
   /* Drawer */
-  .scrim { position: fixed; inset: 0; background: rgba(5, 6, 10, .55); opacity: 0; pointer-events: none; transition: opacity .2s; }
+  .scrim { position: fixed; inset: 0; background: var(--scrim); opacity: 0; pointer-events: none; transition: opacity .2s; }
   .drawer {
     position: fixed; top: 0; right: 0; bottom: 0; width: min(720px, 100vw); overflow-y: auto;
     background: var(--panel); border-left: 1px solid var(--line);
@@ -445,6 +486,12 @@
       <button data-sort="started" aria-pressed="true">started</button>
       <button data-sort="project" aria-pressed="false">project</button>
       <button data-sort="waiting" aria-pressed="false">needs you first</button>
+    </div>
+    <div class="sort" role="group" aria-label="Theme">
+      <span>theme</span>
+      <button data-theme-pick="dark" aria-pressed="true">dark</button>
+      <button data-theme-pick="light" aria-pressed="false">light</button>
+      <button data-theme-pick="auto" aria-pressed="false" title="follow the system setting">auto</button>
     </div>
   </div>
   <div class="ram-break"></div>
@@ -1075,6 +1122,16 @@ function setSort(by) {
 function markSort() {
   for (const b of document.querySelectorAll('[data-sort]')) b.setAttribute('aria-pressed', String(b.dataset.sort === sortBy))
   for (const b of document.querySelectorAll('[data-group-by]')) b.setAttribute('aria-pressed', String(b.dataset.groupBy === groupBy))
+  const pref = document.documentElement.dataset.themePref
+  for (const b of document.querySelectorAll('[data-theme-pick]')) b.setAttribute('aria-pressed', String(b.dataset.themePick === pref))
+}
+// The head script applied the saved theme; this only changes it. CSS variables
+// carry the colors, so nothing needs a rerender.
+function setTheme(t) {
+  document.documentElement.dataset.themePref = t
+  window.applyTheme()
+  try { localStorage.setItem('sessionBoard.theme', t) } catch {}
+  markSort()
 }
 
 // Live counters tick between polls.
@@ -1215,6 +1272,8 @@ document.addEventListener('click', async (e) => {
   if (sort) return setSort(sort.dataset.sort)
   const groupBtn = e.target.closest('[data-group-by]')
   if (groupBtn) return setGroup(groupBtn.dataset.groupBy)
+  const themeBtn = e.target.closest('[data-theme-pick]')
+  if (themeBtn) return setTheme(themeBtn.dataset.themePick)
   const add = e.target.closest('[data-new-session]')
   if (add) return void openSession(add.dataset.newSession, add)
   const head = e.target.closest('[data-group-toggle]')
