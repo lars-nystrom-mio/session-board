@@ -94,7 +94,9 @@ export type Board = {
 // A background task the session will hear from: a Bash or PowerShell call run
 // in the background, or a Monitor. `until` is when the board stops waiting for
 // its notification, which can arrive inside a running turn, where no hook sees it.
-export type ShellRec = { id: string; toolUseId: string; summary: string; since: number; until: number }
+// `agentId` is the subagent that started it: its notification goes to that
+// subagent and never reaches a hook, so the shell goes when the subagent ends.
+export type ShellRec = { id: string; toolUseId: string; summary: string; since: number; until: number; agentId?: string }
 
 // A scheduled job. `cron` is '' for a ScheduleWakeup, which fires once at `nextAt`.
 export type CronRec = {
@@ -664,7 +666,7 @@ export const SHELL_MAX_MS = 2 * 3600_000 // a background shell not heard from in
 
 // Updates the board's background tasks from a finished tool call: a shell or a
 // Monitor started, or TaskStop stopping one. Returns a line for the timeline.
-export function shellToolDone(board: Board, tool: string, input: Record<string, unknown>, result: unknown, toolUseId: string, now: number): string | null {
+export function shellToolDone(board: Board, tool: string, input: Record<string, unknown>, result: unknown, toolUseId: string, now: number, agentId?: string): string | null {
   const r = (result && typeof result === 'object' ? result : {}) as Record<string, unknown>
   if (tool === 'TaskStop') {
     const id = str(input.task_id) || str(input.shell_id) || str(r.task_id)
@@ -677,7 +679,7 @@ export function shellToolDone(board: Board, tool: string, input: Record<string, 
   const timeout = tool === 'Monitor' && r.persistent !== true ? num(r.timeoutMs) : null
   const summary = summarize(tool, input)
   board.shells = [...(board.shells ?? []).filter((s) => s.id !== id),
-    { id, toolUseId, summary, since: now, until: now + Math.min(timeout ?? SHELL_MAX_MS, SHELL_MAX_MS) }]
+    { id, toolUseId, summary, since: now, until: now + Math.min(timeout ?? SHELL_MAX_MS, SHELL_MAX_MS), ...(agentId ? { agentId } : {}) }]
   return `in background: ${summary || tool}`
 }
 
@@ -691,7 +693,9 @@ export function shellReported(board: Board, text: string): ShellRec | null {
 }
 
 export function pruneShells(board: Board, now: number): void {
-  if (board.shells?.length) board.shells = board.shells.filter((s) => s.until > now)
+  if (!board.shells?.length) return
+  const ended = new Set(board.agents.filter((a) => a.status === 'done' || a.status === 'failed').map((a) => a.agentId))
+  board.shells = board.shells.filter((s) => s.until > now && !(s.agentId && ended.has(s.agentId)))
 }
 
 export const BOARD_STATUS_TOOL = {

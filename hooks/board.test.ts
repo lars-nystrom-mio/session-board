@@ -364,6 +364,18 @@ describe('background tasks', () => {
     pruneShells(board, SHELL_MAX_MS)
     expect(board.shells?.length).toBe(0)
   })
+
+  test("a subagent's shell goes when the subagent ends", async () => {
+    const board = freshBoard('s1', '/x', 0)
+    board.agents.push({ key: 'a1', agentId: 'a1', type: 'wi-contract-review', description: '', status: 'running', since: 0 })
+    shellToolDone(board, 'Bash', { command: 'dotnet test' }, { backgroundTaskId: 'b1' }, 't1', 0, 'a1')
+    shellToolDone(board, 'Bash', { command: 'ado-watch.sh' }, { backgroundTaskId: 'b2' }, 't2', 0)
+    pruneShells(board, 1)
+    expect(board.shells?.map((s) => s.id)).toEqual(['b1', 'b2'])
+    board.agents[0]!.status = 'done'
+    pruneShells(board, 2)
+    expect(board.shells?.map((s) => s.id)).toEqual(['b2'])
+  })
 })
 
 describe('board_status', () => {
