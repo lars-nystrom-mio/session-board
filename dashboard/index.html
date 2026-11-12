@@ -327,8 +327,9 @@
   .agent.running { color: var(--text); border-color: color-mix(in srgb, var(--bg-agent) 45%, var(--line)); }
   .agent.done { color: var(--ok); background: color-mix(in srgb, var(--ok) 8%, transparent); border-color: transparent; }
   .agent.failed { color: var(--you); border-color: color-mix(in srgb, var(--you) 40%, transparent); }
-  .agent .spin {
-    width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--bg-agent);
+  .bg-shell { display: inline-flex; align-items: center; gap: 5px; color: var(--bg-agent); white-space: nowrap; }
+  .agent .spin, .bg-shell .spin {
+    flex: none; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--bg-agent);
     border-right-color: transparent; animation: spin .8s linear infinite;
   }
 
@@ -815,6 +816,15 @@ function schedHtml(s) {
   return `<span class="sched" title="${esc(title)}">⏱ ${next.nextAt ? countdown(next.nextAt, '', 'due') : esc(next.human)}${more}</span>`
 }
 
+// Background shells and monitors the session hasn't heard back from yet.
+function shellsHtml(s) {
+  const shells = s.shells || []
+  if (!shells.length) return ''
+  const title = shells.map((b) => `${b.summary || b.id} · since ${clock(b.since)}`).join('\n')
+  const word = shells.length === 1 ? 'in background' : `${shells.length} in background`
+  return `<span class="bg-shell" title="in the background:\n${esc(title)}"><span class="spin"></span>${esc(word)}</span>`
+}
+
 const isStale = (s) => s.state !== 'ended' && Date.now() - s.updatedAt > STALE_MS
 const projectOf = (s) => s.repo?.name || s.project || s.cwd
 const shortModel = (m) => (m || '').replace(/^claude-/, '').replace(/\[.*\]$/, '')
@@ -924,6 +934,7 @@ function tileHtml(s) {
       ${memHtml(s)}
       ${cacheHtml(s)}
       ${schedHtml(s)}
+      ${shellsHtml(s)}
       <span>${s.turns} turn${s.turns === 1 ? '' : 's'}</span>
       ${s.model ? `<span>${esc(shortModel(s.model))}</span>` : ''}
       ${s.prs?.length ? `<span class="prs">${[...s.prs].reverse().map((p) => `

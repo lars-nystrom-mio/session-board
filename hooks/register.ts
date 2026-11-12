@@ -610,7 +610,7 @@ export const register: Register = (on) => {
       outcome = result.deny !== undefined ? 'denied' : result.isError ? 'failed' : 'ok'
       const input = e as unknown as Record<string, unknown>
       if (outcome === 'ok' && board) {
-        const line = cronToolDone(board, e.tool, input, result.result, now()) ?? shellToolDone(board, e.tool, input, result.result, e.tool_use_id, now())
+        const line = cronToolDone(board, e.tool, input, result.result, now()) ?? shellToolDone(board, e.tool, input, result.result, e.tool_use_id, now(), e.agentId)
         if (line) event('tool', line, agentName(e.agentId))
       }
       if (outcome === 'ok' && scansForPrs(e.tool, input)) {
