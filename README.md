@@ -155,6 +155,19 @@ hover. The drawer lists each job's schedule, prompt and next firing. The board
 sees jobs created while it was loaded, or all of them once the session calls
 `CronList`; jobs that outlive the session (`durable`) aren't shown.
 
+Sessions that message each other (`SendMessage` to a name from `ListAgents`)
+get a ✉ badge with the count, and the header shows **✉ N messages**. Click
+either for a graph of the live sessions with an arrow from sender to receiver:
+thicker for more messages, blue for one in the last 10 minutes. Below it are
+the messages themselves. Click an arrow or a session to see only its messages.
+The other session's name (`session-board-57`) says nothing about which session
+it is. The board learns it by pairing a message one session sent with the same
+message arriving in another. Messages sent before this version have no record
+of the send. Their sender is guessed from the name's project when one session
+of that project was up at the time, and their arrow is dotted. A sender the
+board can't place shows as a hollow node. Sessions in a sandbox are left out
+of the graph.
+
 Phases come from the newest running subagent's type, then from the running
 skill. Out of the box:
 
