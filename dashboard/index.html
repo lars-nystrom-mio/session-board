@@ -432,6 +432,54 @@
   .mrow .w.run { color: var(--run); }
   .note { margin: 10px 0 0; font-size: 12px; color: var(--faint); }
 
+  /* Messages between sessions: a header button, a badge on the tile, and a
+     drawer with a graph of who wrote to whom and the messages themselves. */
+  .msgs-btn {
+    font-family: var(--mono); font-size: 12px; background: none; border: 1px solid transparent; border-radius: 6px;
+    padding: 1px 7px; cursor: pointer; color: var(--muted);
+  }
+  .msgs-btn[hidden] { display: none; }
+  .msgs-btn:hover { color: var(--text); border-color: var(--line); background: var(--card); }
+  .msgs-btn:focus-visible { outline: 2px solid var(--run); outline-offset: 1px; }
+  .msgs-btn.hot b { color: var(--run); }
+  .msgs-btn b { font-weight: 600; color: var(--text); }
+  .msg-badge { flex: none; padding: 1px 6px; border-radius: 4px; cursor: pointer; color: var(--muted); background: color-mix(in srgb, var(--muted) 10%, transparent); }
+  .msg-badge:hover { color: var(--text); }
+  .msg-badge.hot { color: var(--run); background: color-mix(in srgb, var(--run) 10%, transparent); }
+  .mgraph { display: block; width: 100%; height: auto; margin: 2px 0 4px; overflow: visible; }
+  .mgraph .edge { fill: none; stroke: var(--faint); opacity: .8; }
+  .mgraph .edge.guess { stroke-dasharray: 1 4; stroke-linecap: round; }
+  .mgraph .edge.hot { stroke: var(--run); opacity: 1; }
+  .mgraph .edge.on { stroke: var(--text); opacity: 1; }
+  .mgraph .hit { fill: none; stroke: transparent; stroke-width: 14; cursor: pointer; }
+  .mgraph .e:hover .edge { stroke: var(--text); opacity: 1; }
+  .mgraph .n { cursor: pointer; }
+  .mgraph .n circle { fill: var(--card); stroke: var(--muted); stroke-width: 1.5; }
+  .mgraph .n.s-running circle { stroke: var(--run); }
+  .mgraph .n.s-background circle { stroke: var(--bg-agent); }
+  .mgraph .n.s-waiting circle { stroke: var(--you); }
+  .mgraph .n.s-idle circle { stroke: var(--ok); }
+  .mgraph .n.gone { opacity: .55; }
+  .mgraph .n.unknown circle { stroke: var(--faint); stroke-dasharray: 2 2; }
+  .mgraph .n.on circle { stroke-width: 3; }
+  .mgraph .n:hover circle { fill: var(--card-hover); }
+  .mgraph text { font-family: var(--mono); font-size: 11.5px; fill: var(--text); }
+  .mgraph text .sub { fill: var(--faint); font-size: 10.5px; }
+  .mgraph .count { font-size: 10px; fill: var(--muted); }
+  .m-focus { display: flex; gap: 8px; align-items: baseline; font-size: 12px; color: var(--muted); margin: 0 0 6px; }
+  .lnk { font: inherit; background: none; border: 0; padding: 0; cursor: pointer; color: var(--text); }
+  .lnk:hover { text-decoration: underline; }
+  .lnk:focus-visible { outline: 2px solid var(--run); outline-offset: 1px; }
+  .lnk.quiet { color: var(--run); }
+  .mlist { display: grid; }
+  .mmsg { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 2px 10px; padding: 6px 0; border-top: 1px solid var(--line); font-size: 12.5px; }
+  .mmsg .tm { font-family: var(--mono); font-size: 11px; color: var(--faint); grid-row: span 2; }
+  .mmsg .who { font-family: var(--mono); font-size: 11.5px; color: var(--muted); min-width: 0; overflow-wrap: anywhere; }
+  .mmsg .who .ar { color: var(--faint); margin: 0 4px; }
+  .mmsg .who .gs { color: var(--faint); }
+  .mmsg .tx { overflow-wrap: anywhere; }
+  .ev.message .k { color: var(--run); }
+
   @keyframes sweep { from { transform: translateX(-50%); } to { transform: translateX(150%); } }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
   @keyframes spin { to { transform: rotate(360deg); } }
@@ -476,6 +524,7 @@
     <output id="launch-out" aria-live="polite"></output>
   </form>
   <div class="view">
+    <button class="msgs-btn" id="msgs" data-messages hidden aria-haspopup="dialog"></button>
     <div class="sort" role="group" aria-label="Group sessions">
       <span>group</span>
       <button data-group-by="none" aria-pressed="true">none</button>
@@ -577,6 +626,12 @@ async function fetchText(url) {
 // and can't take the id of a session on this PC. The server never reads it.
 async function loadSessions() {
   const [own, boxed] = await Promise.all([loadFolder('sessions/'), loadFolder('sandboxed/')])
+  // Before the board told messages apart, another session's message became the
+  // prompt. Shown as what it is; the rewrite is idempotent on cached boards.
+  for (const b of own) {
+    const m = parseEnvelope(b.prompt)
+    if (m) b.prompt = `✉ from ${m.fromName}: ${m.body}`
+  }
   const ids = new Set(own.map((b) => b.sessionId))
   return [...own, ...boxed.map(defang).filter((b) => b && !ids.has(b.sessionId))]
 }
@@ -584,7 +639,7 @@ async function loadSessions() {
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const NUMBER_KEYS = new Set(['startedAt', 'updatedAt', 'stateSince', 'promptAt', 'at', 'since', 'until', 't',
   'turns', 'costUsd', 'percent', 'tokens', 'window', 'nextAt', 'firedAt', 'endedAt', 'createdAt', 'offsetMs', 'number'])
-const LIST_KEYS = ['prs', 'tools', 'agents', 'events', 'crons', 'shells']
+const LIST_KEYS = ['prs', 'tools', 'agents', 'events', 'crons', 'shells', 'messages']
 const TEXT_KEYS = ['cwd', 'project', 'branch', 'tabTitle', 'model', 'prompt', 'workItem', 'activeSkill', 'endReason']
 
 // A status file from a sandbox, made safe to render, or null. The page puts some
@@ -825,6 +880,239 @@ function shellsHtml(s) {
   return `<span class="bg-shell" title="in the background:\n${esc(title)}"><span class="spin"></span>${esc(word)}</span>`
 }
 
+// ---- Messages between sessions ---------------------------------------------
+
+// A session never learns its own name (what ListAgents shows, like
+// "session-board-57"), and the name says nothing about its session id. So a
+// message sent from one file is paired with its receipt in another, by time and
+// text; that pair tells which session each name belongs to. A name with no
+// pair yet is guessed from its project, when one live session fits: a dashed line.
+const MESSAGE_WINDOW_MS = 24 * 3600_000  // messages older than this are left out
+const MESSAGE_RECENT_MS = 10 * 60_000    // an arrow this fresh is drawn lit
+const PAIR_BEFORE_MS = 10 * 60_000       // a receipt can trail its send by this much (a busy receiver)
+const MESSAGES_DRAWER = '@messages'      // openId of the messages drawer, never a session id
+let messageFocus = null                  // a session id or an edge key that filters the drawer
+let flows = []                           // { t, from, to, text, guess } newest first, from render()
+let flowCount = new Map()                // sessionId -> { n, last } for the tile badges
+
+function parseEnvelope(text) {
+  const m = String(text ?? '').match(/^\s*<cross-session-message\b([^>]*)>([\s\S]*)$/)
+  if (!m) return null
+  const attrs = new Map([...m[1].matchAll(/([\w-]+)="([^"]*)"/g)].map((a) => [a[1], a[2]]))
+  const address = attrs.get('from') || ''
+  const fromName = attrs.get('from-name') || address
+  return fromName ? { fromName, address, body: m[2].replace(/<\/cross-session-message>[\s\S]*$/, '').trim() } : null
+}
+
+const isAddress = (to) => /^(uds|bridge):/i.test(to || '')
+const slug = (x) => String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+const sameText = (a, b) => {
+  const norm = (x) => String(x || '').replace(/\s+/g, ' ').replace(/…$/, '').trim().slice(0, 80)
+  const x = norm(a), y = norm(b)
+  return !!x && !!y && (x.startsWith(y) || y.startsWith(x))
+}
+
+// A session's messages: what the hooks record, plus older receipts that the
+// timeline kept as prompts.
+function messagesOf(s) {
+  const own = (s.messages || []).filter((m) => typeof m.t === 'number' && (m.dir === 'in' || m.dir === 'out') && m.peer)
+  const old = s.events.filter((e) => e.kind === 'prompt').map((e) => {
+    const m = parseEnvelope(e.text)
+    return m && { t: e.t, dir: 'in', peer: m.fromName, address: m.address, text: m.body }
+  }).filter(Boolean)
+  return [...own, ...old]
+}
+
+function buildFlows() {
+  const since = Date.now() - MESSAGE_WINDOW_MS
+  // Sandboxed files are left out: they could claim any name.
+  const list = sessions.filter((s) => !s.sandboxed)
+  const msgs = new Map(list.map((s) => [s.sessionId, messagesOf(s).filter((m) => m.t >= since)]))
+  const nameToId = new Map(), byAddress = new Map(), paired = new Set()
+
+  for (const r of list) for (const m of msgs.get(r.sessionId)) {
+    if (m.dir !== 'in') continue
+    for (const s of list) {
+      if (s === r) continue
+      const o = msgs.get(s.sessionId).find((o) => o.dir === 'out' && !paired.has(o) && o.t <= m.t + 60_000 && o.t >= m.t - PAIR_BEFORE_MS && sameText(o.text, m.text))
+      if (!o) continue
+      paired.add(o)
+      nameToId.set(m.peer, s.sessionId)
+      if (m.address) byAddress.set(m.address, s.sessionId)
+      if (!isAddress(o.peer)) nameToId.set(o.peer, r.sessionId)
+      break
+    }
+  }
+
+  // A name the pairs don't cover: the one session of its project that was up then.
+  const guess = (name, t, not) => {
+    const base = name.replace(/-[0-9a-z]{2}$/i, '')
+    const fits = list.filter((s) => s.sessionId !== not && s.startedAt <= t + 60_000 && t <= s.updatedAt + 60_000 &&
+      [s.cwd?.split(/[\\/]/).filter(Boolean).at(-1), projectOf(s), s.repo?.name].some((x) => x && slug(x) === base))
+    return fits.length === 1 ? fits[0].sessionId : null
+  }
+  const resolve = (name, address, t, not) => {
+    const known = (address && byAddress.get(address)) || nameToId.get(name)
+    if (known) return { id: known, guess: false }
+    const g = guess(name, t, not)
+    return g ? { id: g, guess: true } : { id: `?${name}`, guess: false }
+  }
+
+  const out = []
+  for (const r of list) for (const m of msgs.get(r.sessionId)) {
+    if (m.dir === 'in') {
+      const from = resolve(m.peer, m.address, m.t, r.sessionId)
+      out.push({ t: m.t, from: from.id, to: r.sessionId, text: m.text, guess: from.guess })
+    } else if (!paired.has(m)) {
+      const to = resolve(m.peer, m.address, m.t, r.sessionId)
+      out.push({ t: m.t, from: r.sessionId, to: to.id, text: m.text, guess: to.guess })
+    }
+  }
+  flows = out.sort((a, b) => b.t - a.t)
+  flowCount = new Map()
+  for (const f of flows) for (const id of [f.from, f.to]) {
+    const c = flowCount.get(id) || { n: 0, last: 0 }
+    flowCount.set(id, { n: c.n + 1, last: Math.max(c.last, f.t) })
+  }
+}
+
+const sessionById = (id) => sessions.find((s) => s.sessionId === id)
+const isLiveId = (id) => { const s = sessionById(id); return !!s && s.state !== 'ended' && !isStale(s) }
+// Only messages touching a session that is still up; history stays in each session's drawer.
+const shownFlows = () => flows.filter((f) => isLiveId(f.from) || isLiveId(f.to))
+const edgeKey = (a, b) => [a, b].sort().join('|')
+const nodeName = (id) => {
+  const s = sessionById(id)
+  return s ? projectOf(s) : id.slice(1)
+}
+const nodeSub = (id) => {
+  const s = sessionById(id)
+  if (!s) return 'not on the board'
+  return s.workItem ? `#${s.workItem}` : s.tabTitle || (s.prompt ? firstSentence(s.prompt) : s.sessionId.slice(0, 8))
+}
+const clipText = (x, n) => (x.length > n ? x.slice(0, n - 1) + '…' : x)
+// An event's text as shown: an older receipt, kept as a prompt, reads as a message.
+function eventText(e) {
+  const m = e.kind === 'prompt' ? parseEnvelope(e.text) : null
+  return m ? `✉ from ${m.fromName}: ${m.body}` : e.text
+}
+
+function msgBadgeHtml(s) {
+  const c = flowCount.get(s.sessionId)
+  if (!c) return ''
+  const hot = Date.now() - c.last < MESSAGE_RECENT_MS
+  return `<span class="msg-badge${hot ? ' hot' : ''}" data-messages-for="${esc(s.sessionId)}" title="${c.n} message${c.n === 1 ? '' : 's'} with other sessions, last ${esc(clock(c.last))}">✉ ${c.n}</span>`
+}
+
+function renderMessagesButton() {
+  const shown = shownFlows()
+  const el = $('msgs')
+  el.hidden = !shown.length
+  const hot = shown.some((f) => Date.now() - f.t < MESSAGE_RECENT_MS)
+  const html = `✉ <b>${shown.length}</b> message${shown.length === 1 ? '' : 's'}`
+  el.classList.toggle('hot', hot)
+  if (el.dataset.html !== html) {
+    el.innerHTML = html
+    el.dataset.html = html
+    el.title = 'messages between sessions in the last 24 hours'
+  }
+}
+
+// Sessions on a circle, arrows between them: thicker for more messages, lit
+// and moving for a recent one, dashed where the sender is guessed.
+function graphHtml(shown) {
+  const edges = new Map()
+  for (const f of shown) {
+    const k = `${f.from}>${f.to}`
+    const e = edges.get(k) || { from: f.from, to: f.to, n: 0, last: 0, guess: true, texts: [] }
+    e.n++
+    e.last = Math.max(e.last, f.t)
+    e.guess = e.guess && f.guess
+    if (e.texts.length < 3) e.texts.push(`${clock(f.t)}  ${clipText(f.text, 90)}`)
+    edges.set(k, e)
+  }
+  const ids = [...new Set([...edges.values()].flatMap((e) => [e.from, e.to]))]
+    .sort((a, b) => byName(nodeName(a), nodeName(b)) || (a < b ? -1 : 1))
+  const W = 660, H = ids.length <= 2 ? 190 : 440
+  const cx = W / 2, cy = H / 2, R = ids.length <= 2 ? 0 : Math.min(150, 60 + ids.length * 14)
+  const pos = new Map(ids.map((id, i) => {
+    if (ids.length <= 2) return [id, { x: ids.length === 1 ? cx : 170 + i * 320, y: 70 }]
+    const a = -Math.PI / 2 + (2 * Math.PI * i) / ids.length
+    return [id, { x: cx + R * Math.cos(a), y: cy + R * Math.sin(a) }]
+  }))
+  const now = Date.now()
+  const focus = messageFocus
+  const edgeSvg = [...edges.values()].map((e) => {
+    const a = pos.get(e.from), b = pos.get(e.to)
+    const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1
+    const ux = dx / len, uy = dy / len
+    const sx = a.x + ux * 14, sy = a.y + uy * 14, ex = b.x - ux * 17, ey = b.y - uy * 17
+    // Bend to the left of the direction, so A→B and B→A are two arcs.
+    const bend = Math.min(40, len / 5)
+    const qx = (sx + ex) / 2 + uy * bend, qy = (sy + ey) / 2 - ux * bend
+    const hot = now - e.last < MESSAGE_RECENT_MS
+    const on = focus && (focus === edgeKey(e.from, e.to) || focus === e.from || focus === e.to)
+    const cls = `edge${hot ? ' hot' : ''}${e.guess ? ' guess' : ''}${on ? ' on' : ''}`
+    const d = `M${sx.toFixed(1)} ${sy.toFixed(1)} Q${qx.toFixed(1)} ${qy.toFixed(1)} ${ex.toFixed(1)} ${ey.toFixed(1)}`
+    const title = `${nodeName(e.from)} → ${nodeName(e.to)}: ${e.n} message${e.n === 1 ? '' : 's'}, last ${clock(e.last)}${e.guess ? '\n(sender guessed from its project)' : ''}\n\n${e.texts.join('\n')}`
+    const marker = on ? 'm-on' : hot ? 'm-hot' : 'm-off'
+    const lx = (sx + ex) / 2 + uy * bend * 0.55, ly = (sy + ey) / 2 - ux * bend * 0.55
+    return `<g class="e" data-msg-focus="${esc(edgeKey(e.from, e.to))}"><title>${esc(title)}</title>
+      <path class="hit" d="${d}"/>
+      <path class="${cls}" d="${d}" stroke-width="${(1.2 + Math.log2(e.n) * 0.9).toFixed(2)}" marker-end="url(#${marker})"/>
+      ${e.n > 1 ? `<text class="count" x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="middle" dy="3">${e.n}</text>` : ''}</g>`
+  }).join('')
+  const nodeSvg = ids.map((id) => {
+    const p = pos.get(id), s = sessionById(id)
+    const cls = `n${s ? ` s-${isStale(s) ? 'ended' : s.state}` : ' unknown'}${s && !isLiveId(id) ? ' gone' : ''}${focus === id ? ' on' : ''}`
+    let anchor = 'middle', lx = p.x, ly = p.y + 26
+    if (ids.length > 2) {
+      const ox = (p.x - cx) / R, oy = (p.y - cy) / R
+      anchor = ox > 0.3 ? 'start' : ox < -0.3 ? 'end' : 'middle'
+      lx = p.x + ox * 16
+      ly = p.y + oy * 18 + (oy > 0.3 ? 10 : oy < -0.3 ? -12 : 0)
+    }
+    const title = s ? `${projectOf(s)} · ${s.state === 'ended' ? 'ended' : isStale(s) ? 'no heartbeat' : STATE_WORD[s.state]}\n${s.cwd}\nclick to show only its messages` : `${id.slice(1)}: no session on the board has this name yet`
+    return `<g class="${cls}" data-msg-focus="${esc(id)}"><title>${esc(title)}</title>
+      <circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="10"/>
+      <text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="${anchor}">${esc(clipText(nodeName(id), 26))}<tspan class="sub" x="${lx.toFixed(1)}" dy="13">${esc(clipText(nodeSub(id), 30))}</tspan></text></g>`
+  }).join('')
+  const mk = (id, color) => `<marker id="${id}" viewBox="0 0 10 10" refX="8" refY="5" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="9" orient="auto"><path d="M0 0L10 5L0 10z" style="fill:${color}"/></marker>`
+  return `<svg class="mgraph" viewBox="0 0 ${W} ${H}" role="img" aria-label="Messages between ${ids.length} sessions">
+    <defs>${mk('m-off', 'var(--faint)')}${mk('m-hot', 'var(--run)')}${mk('m-on', 'var(--text)')}</defs>${edgeSvg}${nodeSvg}</svg>`
+}
+
+function flowListHtml(list) {
+  if (!list.length) return '<p class="note">No messages.</p>'
+  // Two sessions of one project need their tab titles to tell them apart.
+  const names = new Map()
+  for (const f of list) for (const id of [f.from, f.to]) names.set(nodeName(id), new Set([...(names.get(nodeName(id)) || []), id]))
+  const label = (id) => (names.get(nodeName(id)).size > 1 ? `${nodeName(id)} (${clipText(nodeSub(id), 24)})` : nodeName(id))
+  const who = (id) => (sessionById(id)
+    ? `<button class="lnk" data-session="${esc(id)}" title="${esc(nodeSub(id))}">${esc(label(id))}</button>`
+    : `<span title="no session on the board has this name yet">${esc(id.slice(1))}</span>`)
+  return `<div class="mlist">${list.slice(0, 120).map((f) => `
+    <div class="mmsg"><span class="tm">${esc(clock(f.t))}</span>
+      <span class="who">${who(f.from)}${f.guess ? '<span class="gs" title="sender or recipient guessed from its project"> ?</span>' : ''}<span class="ar">→</span>${who(f.to)}</span>
+      <span class="tx">${esc(f.text)}</span></div>`).join('')}</div>`
+}
+
+function messagesDrawerHtml() {
+  const shown = shownFlows()
+  if (!shown.length) return '<p class="note">No messages between live sessions in the last 24 hours.</p>'
+  const f = messageFocus
+  const list = !f ? shown : f.includes('|')
+    ? shown.filter((x) => edgeKey(x.from, x.to) === f)
+    : shown.filter((x) => x.from === f || x.to === f)
+  const named = (id) => (sessionById(id) ? `${nodeName(id)} (${clipText(nodeSub(id), 24)})` : nodeName(id))
+  const label = !f ? '' : f.includes('|') ? f.split('|').map(named).join(' ⇄ ') : named(f)
+  return `${graphHtml(shown)}
+    <p class="note" style="margin-top:0">Click an arrow or a session to see only its messages. A solid arrow is matched to the message its sender recorded; a dotted one's sender is guessed from its project. Blue: in the last ${MESSAGE_RECENT_MS / 60_000} minutes.</p>
+    <h3>${f ? 'Messages' : 'All messages'}</h3>
+    ${f ? `<div class="m-focus">${esc(label)} · ${list.length} <button class="lnk quiet" data-msg-focus="">show all</button></div>` : ''}
+    ${flowListHtml(list)}`
+}
+
 const isStale = (s) => s.state !== 'ended' && Date.now() - s.updatedAt > STALE_MS
 const projectOf = (s) => s.repo?.name || s.project || s.cwd
 const shortModel = (m) => (m || '').replace(/^claude-/, '').replace(/\[.*\]$/, '')
@@ -913,7 +1201,7 @@ function tileHtml(s) {
           <span class="t">${live(t.since)}</span></div>`).join('')}</div>`
     } else {
       const last = [...s.events].reverse().find((e) => e.kind !== 'session')
-      if (last) slot = `<div class="activity"><div class="act last"><span class="what">${esc(last.text)}</span><span class="t">${live(last.t)} ago</span></div></div>`
+      if (last) slot = `<div class="activity"><div class="act last"><span class="what">${esc(eventText(last))}</span><span class="t">${live(last.t)} ago</span></div></div>`
     }
   }
   parts.push(`<div class="slot">${slot}</div>`)
@@ -935,6 +1223,7 @@ function tileHtml(s) {
       ${cacheHtml(s)}
       ${schedHtml(s)}
       ${shellsHtml(s)}
+      ${msgBadgeHtml(s)}
       <span>${s.turns} turn${s.turns === 1 ? '' : 's'}</span>
       ${s.model ? `<span>${esc(shortModel(s.model))}</span>` : ''}
       ${s.prs?.length ? `<span class="prs">${[...s.prs].reverse().map((p) => `
@@ -1025,6 +1314,8 @@ function render() {
   }).join('')
   if ($('summary').dataset.html !== summary) { $('summary').innerHTML = summary; $('summary').dataset.html = summary }
   renderMemory()
+  buildFlows()
+  renderMessagesButton()
 
   // Groups, keyed like tiles so polls never rebuild them. Tiles are placed first
   // and unused sections removed after, so a tile that changes group just moves.
@@ -1234,9 +1525,15 @@ function drawerHtml(s) {
         <td class="st" style="color:${a.status === 'done' ? 'var(--ok)' : a.status === 'failed' ? 'var(--you)' : 'var(--bg-agent)'}">
           ${esc(a.status)} ${a.endedAt ? dur(a.endedAt - a.since) : live(a.since)}</td></tr>`).join('')}</table>`)
   }
+  const mine = flows.filter((f) => f.from === s.sessionId || f.to === s.sessionId)
+  if (mine.length) {
+    out.push(`<h3>Messages with other sessions</h3>
+      <div class="m-focus">${mine.length} in the last 24 hours · <button class="lnk quiet" data-messages-for="${esc(s.sessionId)}">show on the graph</button></div>
+      ${flowListHtml(mine.slice(0, 20))}`)
+  }
   out.push(`<h3>Timeline</h3><div class="timeline">${[...s.events].reverse().map((e) => `
     <div class="ev ${e.kind}"><span class="tm">${clock(e.t)}</span><span class="k">${esc(e.kind)}</span>
-      <span class="tx">${e.agent ? `<span class="ag">${esc(e.agent)}</span>` : ''}${esc(e.text)}</span></div>`).join('')}</div>`)
+      <span class="tx">${e.agent ? `<span class="ag">${esc(e.agent)}</span>` : ''}${esc(eventText(e))}</span></div>`).join('')}</div>`)
   return out.join('')
 }
 
@@ -1246,6 +1543,13 @@ function renderDrawer() {
     if ($('d-title').dataset.html !== 'Memory') { $('d-title').textContent = 'Memory'; $('d-title').dataset.html = 'Memory' }
     const html = memoryDrawerHtml()
     if (html !== openHtml) { $('d-body').innerHTML = html; openHtml = html; tick() }
+    return
+  }
+  if (openId === MESSAGES_DRAWER) {
+    $('d-sub').textContent = 'between sessions, last 24 hours'
+    if ($('d-title').dataset.html !== 'Messages') { $('d-title').textContent = 'Messages'; $('d-title').dataset.html = 'Messages' }
+    const html = messagesDrawerHtml()
+    if (html !== openHtml) { $('d-body').innerHTML = html; openHtml = html }
     return
   }
   const s = sessions.find((x) => x.sessionId === openId)
@@ -1290,6 +1594,16 @@ document.addEventListener('click', async (e) => {
   const head = e.target.closest('[data-group-toggle]')
   if (head) return toggleGroup(head.dataset.groupToggle)
   if (e.target.closest('[data-memory]')) return openDrawer(MEMORY_DRAWER)
+  // Messages: the header button, a tile's badge, and the graph's arrows and sessions.
+  const msgsFor = e.target.closest('[data-messages-for]')
+  if (msgsFor) { messageFocus = msgsFor.dataset.messagesFor; return openDrawer(MESSAGES_DRAWER) }
+  if (e.target.closest('[data-messages]')) { messageFocus = null; return openDrawer(MESSAGES_DRAWER) }
+  const focusOn = e.target.closest('[data-msg-focus]')
+  if (focusOn) {
+    const f = focusOn.dataset.msgFocus || null
+    messageFocus = f === messageFocus ? null : f
+    return renderDrawer()
+  }
   const tile = e.target.closest('[data-session]')
   if (tile) return openDrawer(tile.dataset.session)
   if (e.target.closest('[data-close]')) closeDrawer()

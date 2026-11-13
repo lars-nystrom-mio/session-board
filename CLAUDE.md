@@ -74,7 +74,14 @@ session to pick it up there.
 claude plugin validate .
 claude plugin test .
 cd server && python -m unittest
+cd dashboard && python -m unittest
 ```
+
+`dashboard/test_dashboard.py` drives the page with Playwright (`pip install
+playwright`) in the installed Edge or Chrome, against made-up status files in a
+temp folder. Without Playwright or a browser it skips. An SVG arc's box centre
+is off the line, so it clicks a point on the path, and it waits for the drawer
+to stop sliding before clicking inside it.
 
 Test the server against a scratch board with `--dir <scratch> --port 8799`. Run
 it with `claude` off `PATH` to exercise the queue without opening a session: the
@@ -149,6 +156,23 @@ SESSION_BOARD_DIR=<scratch dir> claude -p --plugin-dir . --model haiku "<prompt 
 - An actual start from the queue: the Windows Terminal tab, that
   `--session-id` gives the status file the name the queue waits for, and that
   a delivery run calls `board_status` at its end without being told to.
+
+- Another session's message arrives through `session.receive` (also inside a
+  running turn) and, when it starts a turn, as a `turn.start` whose text begins
+  `<cross-session-message from="uds:…" from-name="x-57" …>`. Both record it in
+  `messages`, kept once by `addMessage`; it is not a prompt. A harness notice
+  (`[Cross-session idle notice] "x-57" …`) is not a prompt either.
+  `session.send` records what this session sent, once delivered, unless it
+  went to `main`, a subagent's id or a `name@team` teammate.
+- A session's name in `ListAgents` (`session-board-f4`) can't be derived from
+  its session id, and no API gives it. The page learns it by pairing a sent
+  message with its receipt in another file (`buildFlows`).
+
+## Not verified yet (messages)
+
+- That `session.receive`'s `text` carries the `<cross-session-message>`
+  envelope. If it doesn't, a message that arrives during a running turn is
+  missed. One that starts a turn is still caught by `turn.start`.
 
 ## Ideas not built
 

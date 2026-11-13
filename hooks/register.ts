@@ -10,6 +10,7 @@ import {
   BOARD_QUEUE_TOOL,
   BOARD_STATUS_TOOL,
   QUIET_TOOLS,
+  addMessage,
   addPrs,
   adoPrLink,
   adoPrShowArgv,
@@ -19,6 +20,7 @@ import {
   clip,
   cronFired,
   cronToolDone,
+  crossSessionMessage,
   deriveState,
   freshBoard,
   memoryOf,
@@ -30,8 +32,10 @@ import {
   pruneCrons,
   pruneShells,
   plannedWork,
+  peerNotice,
   pushEvent,
   scansForPrs,
+  sendTarget,
   sessionTitleOf,
   shellReported,
   shellToolDone,
@@ -332,6 +336,7 @@ async function init($: EngineInterface, cwd: string, interactive: boolean, reaso
   board.machine ??= null
   board.crons ??= []
   board.shells ??= []
+  board.messages ??= []
   board.done ??= null
   transcriptPath = ''
   memoryPid = 0
@@ -462,7 +467,14 @@ async function turnStarted($: EngineInterface, text: string) {
   const handback = /^\s*<(agent-message|task-notification)[\s>]/.test(text)
   const fired = cronFired(b, text, now())
   if (fired) event('turn', `${fired.human} fired`)
-  if (handback) {
+  // Another session's message or a notice about one: not the person's prompt.
+  const fromPeer = crossSessionMessage(text)
+  const notice = fromPeer ? null : peerNotice(text)
+  if (fromPeer) {
+    messageReceived(fromPeer)
+  } else if (notice) {
+    event('message', `${notice.kind} notice${notice.peer ? ` from ${notice.peer}` : ''}`)
+  } else if (handback) {
     // A subagent reporting back, not the person: keep the prompt as it was.
     const from = text.match(/^\s*<[^>]*\sfrom="([^"]*)"/)?.[1]
     const shell = shellReported(b, text)
@@ -480,6 +492,26 @@ async function turnStarted($: EngineInterface, text: string) {
     notePrs(prLinksOf(text))
     b.workItem = workItemOf(shown, false) ?? b.workItem
   }
+  schedule($)
+}
+
+// A message from another session, from `session.receive` (it can arrive inside
+// a running turn) or from the turn it starts; whichever comes second is a duplicate.
+function messageReceived(m: { fromName: string; address: string; body: string }) {
+  if (!board) return
+  const rec = { t: now(), dir: 'in' as const, peer: m.fromName, text: m.body, ...(m.address ? { address: m.address } : {}) }
+  if (addMessage(board, rec)) event('message', `from ${m.fromName}: ${m.body}`)
+}
+
+// A message this session sent, once delivered. Messages to its own subagents
+// and teammates are left out.
+async function messageSent($: EngineInterface, to: string, text: string, agentId?: string) {
+  const b = await ensure($)
+  const target = b ? sendTarget(b, to) : null
+  if (!b || !target) return
+  const agent = agentName(agentId)
+  const rec = { t: now(), dir: 'out' as const, peer: target.peer, text, ...(target.address ? { address: target.address } : {}), ...(agent ? { agent } : {}) }
+  if (addMessage(b, rec)) event('message', `to ${target.peer}: ${text}`, agent)
   schedule($)
 }
 
@@ -565,6 +597,26 @@ export const register: Register = (on) => {
     mainTurnId = result.turnId
     return result
   })
+
+  // Another session's message, as it reaches this one: also while a turn runs,
+  // where no turn.start shows it. Only the main conversation's.
+  on('session.receive', async ($, e, next) => {
+    const result = await next(e)
+    if (!e.agentId && result.consumed === undefined) {
+      const m = crossSessionMessage(result.text) ?? crossSessionMessage(e.text)
+      if (m && (await ensure($))) {
+        messageReceived(m)
+        schedule($)
+      }
+    }
+    return result
+  }).catch(($, e, next) => next(e)) // the board only observes: on failure the delivery goes on
+
+  on('session.send', async ($, e, next) => {
+    const result = await next(e)
+    if (result.isDelivered) await messageSent($, e.to, e.text, e.agentId)
+    return result
+  }).catch(($, e, next) => next(e)) // the board only observes: on failure the send goes on
 
   on('turn.complete', async ($, e, next) => {
     await turnCompleted($, e)

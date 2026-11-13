@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'claude-code/testing'
-import { boardStatus, plannedWork, pruneShells, shellReported, shellToolDone, SHELL_MAX_MS, addPrs, adoOrgOf, cronFired, cronToolDone, nextCronMatch, pruneCrons, CRON_EXPIRY_MS, WAKEUP_ID, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, childLabel, deriveState, freshBoard, memoryOf, parseMachine, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, summarize, toolLabel, trimAgents, workItemOf, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
+import { addMessage, crossSessionMessage, peerNotice, sendTarget, MAX_MESSAGES, boardStatus, plannedWork, pruneShells, shellReported, shellToolDone, SHELL_MAX_MS, addPrs, adoOrgOf, cronFired, cronToolDone, nextCronMatch, pruneCrons, CRON_EXPIRY_MS, WAKEUP_ID, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, childLabel, deriveState, freshBoard, memoryOf, parseMachine, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, summarize, toolLabel, trimAgents, workItemOf, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
 
 describe('summaries', () => {
   test('a tool call becomes one short line', async () => {
@@ -438,4 +438,56 @@ test('the board answers its own board_queue tool', async ($) => {
   expect(result.deny).toBe(undefined)
   // The kit has no env to find the board folder in; the tool still answers.
   expect(String(result.result)).toMatch(/Nothing|#\d+|not available/)
+})
+
+describe('messages between sessions', () => {
+  const envelope = '<cross-session-message from="uds:\\.\pipe\LOCAL\cc-msg-3aee0de9" from-name="session-board-57" from-mode="prompting">\nProbe reply: all good.\n</cross-session-message>\n\nThis came from another Claude session.'
+
+  test('a message from another session is parsed, wherever its attributes are', async () => {
+    expect(crossSessionMessage(envelope)).toEqual({ fromName: 'session-board-57', address: 'uds:\\.\pipe\LOCAL\cc-msg-3aee0de9', body: 'Probe reply: all good.' })
+    expect(crossSessionMessage('<cross-session-message from-name="a-1" from="bridge:s">cut off')).toEqual({ fromName: 'a-1', address: 'bridge:s', body: 'cut off' })
+    expect(crossSessionMessage('<cross-session-message from="uds:x">hi</cross-session-message>')?.fromName).toBe('uds:x')
+    expect(crossSessionMessage('please look at <cross-session-message from="x">')).toBe(null)
+    expect(crossSessionMessage('<agent-message from="a1">done</agent-message>')).toBe(null)
+  })
+
+  test('notices about another session are recognised', async () => {
+    expect(peerNotice('[Cross-session idle notice] "session-board-57", which you asked to be notified about, is idle now')).toEqual({ kind: 'idle', peer: 'session-board-57' })
+    expect(peerNotice('[Cross-session delivery notice] held for approval')).toEqual({ kind: 'delivery', peer: '' })
+    expect(peerNotice('what is a [Cross-session idle notice]?')).toBe(null)
+  })
+
+  test('a send names another session, not a subagent or teammate of this one', async () => {
+    const board = freshBoard('s1', '/x', 0)
+    board.agents.push({ key: 'a1b2', agentId: 'a1b2', type: 'Explore', description: '', status: 'running', since: 0 })
+    expect(sendTarget(board, 'session-board-57')).toEqual({ peer: 'session-board-57' })
+    expect(sendTarget(board, 'main')).toBe(null)
+    expect(sendTarget(board, 'a1b2')).toBe(null)
+    expect(sendTarget(board, 'researcher@team')).toBe(null)
+    // A reply to a from address is named after the session that wrote from it.
+    addMessage(board, { t: 1, dir: 'in', peer: 'session-board-57', address: 'uds:pipe-57', text: 'hi' })
+    expect(sendTarget(board, 'uds:pipe-57')).toEqual({ peer: 'session-board-57', address: 'uds:pipe-57' })
+    expect(sendTarget(board, 'uds:other')).toEqual({ peer: 'uds:other', address: 'uds:other' })
+  })
+
+  test('one delivery seen twice is kept once, and the list is capped', async () => {
+    const board = freshBoard('s1', '/x', 0)
+    expect(addMessage(board, { t: 1000, dir: 'in', peer: 'x-57', text: 'hello' })).toBe(true)
+    expect(addMessage(board, { t: 3000, dir: 'in', peer: 'x-57', text: 'hello' })).toBe(false)
+    expect(addMessage(board, { t: 3000, dir: 'out', peer: 'x-57', text: 'hello' })).toBe(true)
+    expect(addMessage(board, { t: 3000 + 11 * 60_000, dir: 'in', peer: 'x-57', text: 'hello' })).toBe(true)
+    for (let i = 0; i < MAX_MESSAGES + 5; i++) addMessage(board, { t: i, dir: 'out', peer: 'y', text: String(i) })
+    expect(board.messages?.length).toBe(MAX_MESSAGES)
+    expect(board.messages?.at(-1)?.text).toBe(String(MAX_MESSAGES + 4))
+  })
+
+  test('SendMessage reads as a line naming its recipient', async () => {
+    expect(summarize('SendMessage', { to: 'session-board-57', summary: 'probe', message: 'long text' })).toBe('→ session-board-57: probe')
+  })
+})
+
+test('the board never gets in the way of a message to another session', async ($, on) => {
+  on('session.send', () => ({ isDelivered: true }))
+  const result = await $.session.send({ to: 'session-board-57', text: 'hello' })
+  expect(result.isDelivered).toBe(true)
 })

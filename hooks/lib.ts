@@ -24,8 +24,25 @@ export type AgentRec = {
 
 export type BoardEvent = {
   t: number
-  kind: 'session' | 'prompt' | 'skill' | 'agent' | 'tool' | 'error' | 'turn' | 'waiting'
+  kind: 'session' | 'prompt' | 'skill' | 'agent' | 'tool' | 'error' | 'turn' | 'waiting' | 'message'
   text: string
+  agent?: string
+}
+
+// A message between this session and another Claude session. `peer` is the
+// other session's name as ListAgents shows it: the sender's `from-name` for one
+// received, the SendMessage recipient for one sent. A session never learns its
+// own name, so the page pairs a sent message with its receipt in the other
+// session's file to learn which session a name belongs to.
+export type MessageRec = {
+  t: number
+  dir: 'in' | 'out'
+  peer: string
+  // The other session's address (`uds:…`, `bridge:…`): the sender's `from` on
+  // one received, the recipient on a reply sent to such an address.
+  address?: string
+  text: string
+  // The subagent that sent it; the message still goes out under the session's address.
   agent?: string
 }
 
@@ -86,6 +103,8 @@ export type Board = {
   crons?: CronRec[]
   // Background shells and monitors that haven't reported back yet.
   shells?: ShellRec[]
+  // Messages to and from other Claude sessions, oldest first.
+  messages?: MessageRec[]
   // Set through the board_status tool: the task the session was started with is
   // finished. A queue in server/serve.py frees the session's slot on it.
   done?: { at: number; note: string } | null
@@ -144,10 +163,12 @@ export const MEMORY_HISTORY = 120 // two hours at one sample a minute
 export const MAX_EVENTS = 80
 export const MAX_AGENTS = 30
 export const MAX_PRS = 6
+export const MAX_MESSAGES = 60
 
 // Tools too frequent to be worth a line in the timeline. They still show as
-// the session's current activity while they run.
-export const QUIET_TOOLS = new Set(['Read', 'Grep', 'Glob', 'ToolSearch', 'LS', 'SubagentHandback'])
+// the session's current activity while they run. SendMessage gets its own
+// `message` line from `session.send`, which knows whether it was delivered.
+export const QUIET_TOOLS = new Set(['Read', 'Grep', 'Glob', 'ToolSearch', 'LS', 'SubagentHandback', 'SendMessage'])
 
 export function clip(text: string, max = 240): string {
   const flat = text.replace(/\s+/g, ' ').trim()
@@ -188,6 +209,8 @@ export function summarize(tool: string, input: Record<string, unknown>): string 
       return clip(s('url'), 120)
     case 'WebSearch':
       return clip(s('query'), 120)
+    case 'SendMessage':
+      return clip(`→ ${s('to')}: ${s('summary') || s('message')}`, 120)
     case 'AskUserQuestion': {
       const questions = input.questions as { question?: string }[] | undefined
       return clip(questions?.[0]?.question ?? '', 160)
@@ -209,6 +232,62 @@ export function slashCommand(text: string): { name: string; args: string } | nul
   if (tag?.[1]) return { name: tag[1].trim(), args: '' }
   const m = text.trim().match(/^\/([\w:.-]+)(?:\s+([\s\S]*))?$/)
   return m?.[1] ? { name: m[1], args: clip(m[2] ?? '', 200) } : null
+}
+
+// ---- Messages between sessions ---------------------------------------------
+
+const MESSAGE_TEXT = 240
+const MESSAGE_DEDUPE_MS = 10 * 60_000
+
+// What another session's message arrives as, in a turn's text or a
+// `session.receive` delivery:
+// <cross-session-message from="uds:…" from-name="x-57" from-mode="…">body</cross-session-message>
+// Attributes in any order; the body runs to the closing tag, or to the end.
+export function crossSessionMessage(text: string): { fromName: string; address: string; body: string } | null {
+  const open = text.match(/^\s*<cross-session-message\b([^>]*)>/)
+  if (!open) return null
+  const attrs = new Map([...(open[1] ?? '').matchAll(/([\w-]+)="([^"]*)"/g)].map((m) => [m[1] ?? '', m[2] ?? '']))
+  const rest = text.slice(open[0].length)
+  const end = rest.indexOf('</cross-session-message>')
+  const body = (end >= 0 ? rest.slice(0, end) : rest).trim()
+  const address = attrs.get('from') ?? ''
+  const fromName = attrs.get('from-name') || address
+  return fromName ? { fromName, address, body } : null
+}
+
+// The harness's own notices about another session: "[Cross-session idle
+// notice] "x-57", which you asked …" and delivery notices. Not a person's prompt.
+export function peerNotice(text: string): { kind: string; peer: string } | null {
+  const m = text.match(/^\s*\[Cross-session (\w+) notice\]\s*(?:"([^"]+)")?/)
+  return m ? { kind: m[1] ?? 'notice', peer: m[2] ?? '' } : null
+}
+
+export const isSessionAddress = (to: string) => /^(uds|bridge):/i.test(to.trim())
+
+// Whom a `session.send` went to, as a cross-session recipient, or null for a
+// message inside this session: "main" from a background subagent, a subagent by
+// its id, a teammate by its `name@team` address.
+export function sendTarget(board: Board, to: string): { peer: string; address?: string } | null {
+  const target = to.trim()
+  if (!target || target === 'main' || target.includes('@')) return null
+  if (board.agents.some((a) => a.agentId === target || a.key === target)) return null
+  if (!isSessionAddress(target)) return { peer: target }
+  // A reply to a `from` address: name it after the session that wrote from there.
+  const known = [...(board.messages ?? [])].reverse().find((m) => m.address === target && m.dir === 'in')
+  return { peer: known?.peer ?? target, address: target }
+}
+
+// Adds a message unless the same one is already there: a delivery can reach
+// both `session.receive` and, when it starts a turn, `turn.start`. Returns
+// whether it was added.
+export function addMessage(board: Board, rec: MessageRec): boolean {
+  const text = clip(rec.text, MESSAGE_TEXT)
+  const list = (board.messages ??= [])
+  const same = list.some((m) => m.dir === rec.dir && m.peer === rec.peer && m.text === text && Math.abs(m.t - rec.t) < MESSAGE_DEDUPE_MS)
+  if (same) return false
+  list.push({ ...rec, text })
+  if (list.length > MAX_MESSAGES) list.splice(0, list.length - MAX_MESSAGES)
+  return true
 }
 
 // A work item id: "#1234" anywhere, or a bare 4–7 digit number in skill args.
@@ -891,6 +970,7 @@ export function freshBoard(sessionId: string, cwd: string, now: number): Board {
     machine: null,
     crons: [],
     shells: [],
+    messages: [],
     done: null,
   }
 }
