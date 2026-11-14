@@ -496,12 +496,15 @@
   .lnk:focus-visible { outline: 2px solid var(--run); outline-offset: 1px; }
   .lnk.quiet { color: var(--run); }
   .mlist { display: grid; }
-  .mmsg { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 2px 10px; padding: 6px 0; border-top: 1px solid var(--line); font-size: 12.5px; }
-  .mmsg .tm { font-family: var(--mono); font-size: 11px; color: var(--faint); grid-row: span 2; }
+  .mmsg { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 3px 10px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 12.5px; line-height: 1.5; }
+  .mmsg .tm { font-family: var(--mono); font-size: 11px; color: var(--faint); grid-row: span 2; font-variant-numeric: tabular-nums; }
   .mmsg .who { font-family: var(--mono); font-size: 11.5px; color: var(--muted); min-width: 0; overflow-wrap: anywhere; }
-  .mmsg .who .ar { color: var(--faint); margin: 0 4px; }
-  .mmsg .who .gs { color: var(--faint); }
-  .mmsg .tx { overflow-wrap: anywhere; }
+  .mmsg .who .pj { color: var(--faint); margin-right: 8px; }
+  .mmsg .who .ar { color: var(--faint); margin: 0 6px; }
+  .mmsg .who .gs { color: var(--faint); margin-left: 6px; }
+  .mmsg .tx { overflow-wrap: anywhere; max-width: 72ch; }
+  .mmsg .tx .li { display: block; padding-left: 1.1em; text-indent: -1.1em; }
+  .mmsg .tx .li::before { content: "–"; display: inline-block; width: 1.1em; text-indent: 0; color: var(--faint); }
   .ev.message .k { color: var(--run); }
 
   @keyframes sweep { from { transform: translateX(-50%); } to { transform: translateX(150%); } }
@@ -1112,13 +1115,24 @@ function flowListHtml(list) {
   const names = new Map()
   for (const f of list) for (const id of [f.from, f.to]) names.set(nodeName(id), new Set([...(names.get(nodeName(id)) || []), id]))
   const label = (id) => (names.get(nodeName(id)).size > 1 ? `${nodeName(id)} (${clipText(nodeSub(id), 24)})` : nodeName(id))
-  const who = (id) => (sessionById(id)
-    ? `<button class="lnk" data-session="${esc(id)}" title="${esc(nodeSub(id))}">${esc(label(id))}</button>`
+  const who = (id, text = label(id)) => (sessionById(id)
+    ? `<button class="lnk" data-session="${esc(id)}" title="${esc(`${nodeName(id)} · ${nodeSub(id)}`)}">${esc(text)}</button>`
     : `<span title="no session on the board has this name yet">${esc(id.slice(1))}</span>`)
+  // Two sessions of one project: name the project once, then tell them apart.
+  const pair = (f) => (nodeName(f.from) === nodeName(f.to) && sessionById(f.from) && sessionById(f.to)
+    ? `<span class="pj">${esc(nodeName(f.from))}</span>${who(f.from, clipText(nodeSub(f.from), 32))}<span class="ar">→</span>${who(f.to, clipText(nodeSub(f.to), 32))}`
+    : `${who(f.from)}<span class="ar">→</span>${who(f.to)}`)
   return `<div class="mlist">${list.slice(0, 120).map((f) => `
     <div class="mmsg"><span class="tm">${esc(clock(f.t))}</span>
-      <span class="who">${who(f.from)}${f.guess ? '<span class="gs" title="sender or recipient guessed from its project"> ?</span>' : ''}<span class="ar">→</span>${who(f.to)}</span>
-      <span class="tx">${esc(f.text)}</span></div>`).join('')}</div>`
+      <span class="who">${pair(f)}${f.guess ? '<span class="gs" title="sender or recipient guessed from its project">?</span>' : ''}</span>
+      <span class="tx">${messageTextHtml(f.text)}</span></div>`).join('')}</div>`
+}
+
+// Recorded messages arrive flattened to one line, so a list reads "Gates: - a. - b".
+// Put each item that follows a sentence or a colon back on its own line.
+function messageTextHtml(text) {
+  const [head, ...items] = esc(text).split(/(?<=[.:;!?)]) - (?=\S)/)
+  return head + items.map((x) => `<span class="li">${x}</span>`).join('')
 }
 
 function messagesDrawerHtml() {
