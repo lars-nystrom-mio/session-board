@@ -255,25 +255,28 @@
   .tile.stale { opacity: .5; filter: saturate(.3); }
   .tile.blip { animation: enter .35s ease both, blip .7s ease-out; }
 
-  .t-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .t-top { display: flex; align-items: center; gap: 8px; min-width: 0; height: 22px; }
   .state-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--faint); }
   .s-running .state-dot { background: var(--run); animation: pulse 1.4s ease-in-out infinite; }
   .s-background .state-dot { background: var(--bg-agent); animation: pulse 2.4s ease-in-out infinite; }
   .s-waiting .state-dot { background: var(--you); animation: pulse .9s ease-in-out infinite; }
   .s-idle .state-dot { background: var(--ok); }
   .project { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .branch { font-family: var(--mono); font-size: 11px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .branch { font-family: var(--mono); font-size: 11px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   /* The terminal tab's name, so the right tab is easy to find. */
   .tab {
-    min-width: 0; flex: 0 1 auto; padding: 1px 8px; border: 1px solid var(--line); border-radius: 5px;
+    padding: 1px 8px; border: 1px solid var(--line); border-radius: 5px;
     font-size: 11.5px; color: var(--text); background: var(--bg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .s-waiting .tab { border-color: color-mix(in srgb, var(--you) 55%, var(--line)); }
-  .project { flex: none; max-width: 45%; }
-  .branch { flex: 1 1 0; }
+  /* The project and the tab grow from zero in equal shares, each capped at its
+     own text, so a short one hands its share to the other and long ones
+     truncate evenly. The branch takes a smaller share; the time never shrinks. */
+  .project, .tab { flex: 1 1 0; min-width: 0; max-width: max-content; }
+  .branch { flex: .6 1 0; min-width: 0; max-width: max-content; }
   /* A session in a sandbox: its tile comes from a file the sandbox wrote. */
   .sbx { flex: none; padding: 0 6px; border: 1px dashed var(--muted); border-radius: 5px; font-size: 10.5px; color: var(--muted); }
-  .since { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
+  .since { flex: none; margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
   .s-waiting .since { color: var(--you); }
 
   /* Every tile has the same fixed slots, so tiles are all one height and content
@@ -318,8 +321,17 @@
   .act .what { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
   .act .t { margin-left: auto; color: var(--faint); flex: none; }
   .act.last .what { color: var(--muted); }
+  .act.past .what { color: var(--faint); }
 
-  .agents { margin-top: 10px; height: 22px; display: flex; gap: 5px; overflow: hidden; }
+  /* A chip that doesn't fit wraps onto a second line, which the fixed height
+     hides; fitAgents() then counts what it hid into the +N chip. */
+  .agents {
+    margin-top: 10px; height: 22px; display: flex; flex-wrap: wrap; align-content: flex-start;
+    gap: 4px 5px; overflow: hidden;
+  }
+  .agent.cut { display: none; }
+  .agent.more { color: var(--muted); border-style: dashed; }
+  .agent.more[hidden] { display: none; }
   .agent {
     display: inline-flex; align-items: center; gap: 5px; flex: none; font-family: var(--mono); font-size: 10.5px;
     padding: 2px 7px; border-radius: 5px; border: 1px solid var(--line); color: var(--muted);
@@ -333,15 +345,27 @@
     border-right-color: transparent; animation: spin .8s linear infinite;
   }
 
-  .t-foot { margin-top: 12px; display: flex; align-items: center; gap: 12px; font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
-  .prs { margin-left: auto; display: flex; gap: 6px; min-width: 0; overflow: hidden; }
+  /* Two footer rows, both always there so every tile is one height. Items keep
+     their text on one line; in a full row the last ones (lowest priority, by
+     source order) wrap onto a hidden second line instead of being cut. */
+  .t-foot { margin-top: 12px; display: grid; gap: 4px; font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
+  .f-row, .f-left, .prs {
+    display: flex; flex-wrap: wrap; align-items: center; align-content: flex-start;
+    gap: 4px 10px; height: 18px; overflow: hidden; min-width: 0;
+  }
+  .f-row > *, .f-left > *, .prs > * { flex: none; white-space: nowrap; line-height: 18px; }
+  .f-transient { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; }
+  /* Room for two PR chips; the row gap keeps a wrapped third fully hidden. */
+  .prs { justify-content: flex-end; gap: 4px 6px; max-width: 26ch; }
+  .t-foot .msg-badge { padding: 0 6px; line-height: 16px; }
+  .ctx { display: inline-flex; align-items: center; gap: 6px; }
   .pr {
-    flex: none; color: var(--run); padding: 1px 6px; border-radius: 4px; cursor: pointer;
+    color: var(--run); padding: 0 6px; line-height: 16px; border-radius: 4px; cursor: pointer;
     background: color-mix(in srgb, var(--run) 10%, transparent);
   }
   .pr:hover { text-decoration: underline; }
   .pr-list a { color: var(--run); }
-  .meter { flex: 1; max-width: 120px; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+  .meter { width: 44px; flex: none; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
   .meter i { display: block; height: 100%; background: var(--muted); border-radius: 2px; transition: width .6s ease; }
   .meter.hot i { background: var(--warn); }
   .countdown.low { color: var(--warn); }
@@ -1200,8 +1224,10 @@ function tileHtml(s) {
           <span class="what">${esc(t.tool)}${t.summary ? ` · ${esc(t.summary)}` : ''}</span>
           <span class="t">${live(t.since)}</span></div>`).join('')}</div>`
     } else {
-      const last = [...s.events].reverse().find((e) => e.kind !== 'session')
-      if (last) slot = `<div class="activity"><div class="act last"><span class="what">${esc(eventText(last))}</span><span class="t">${live(last.t)} ago</span></div></div>`
+      // Nothing running: what it did last, newest first, older lines fainter.
+      const recent = s.events.filter((e) => e.kind !== 'session').slice(-3).reverse()
+      if (recent.length) slot = `<div class="activity">${recent.map((e, i) => `
+        <div class="act ${i ? 'past' : 'last'}"><span class="what">${esc(eventText(e))}</span><span class="t">${live(e.t)} ago</span></div>`).join('')}</div>`
     }
   }
   parts.push(`<div class="slot">${slot}</div>`)
@@ -1212,25 +1238,67 @@ function tileHtml(s) {
   parts.push(`<div class="agents">${[...running, ...recent].map((a) => `
     <span class="agent ${a.status}" title="${esc(a.description)}${a.lastTool ? '\n' + esc(a.lastTool) : ''}">
       ${a.status === 'running' ? '<span class="spin"></span>' : a.status === 'done' ? '✓' : a.status === 'failed' ? '✕' : '…'}
-      ${esc(a.type)}</span>`).join('')}</div>`)
+      ${esc(a.type)}</span>`).join('')}<span class="agent more" hidden></span></div>`)
 
+  // Source order is priority order: the last items in a row are the first to go.
   const pct = s.context?.percent
   parts.push(`
     <div class="t-foot">
-      ${pct != null ? `<span class="meter ${pct > 75 ? 'hot' : ''}" title="context ${Math.round(pct)}%"><i style="width:${Math.min(100, pct)}%"></i></span><span>${Math.round(pct)}%</span>` : ''}
-      ${s.costUsd != null ? `<span>$${s.costUsd.toFixed(2)}</span>` : ''}
-      ${memHtml(s)}
-      ${cacheHtml(s)}
-      ${schedHtml(s)}
-      ${shellsHtml(s)}
-      ${msgBadgeHtml(s)}
-      <span>${s.turns} turn${s.turns === 1 ? '' : 's'}</span>
-      ${s.model ? `<span>${esc(shortModel(s.model))}</span>` : ''}
-      ${s.prs?.length ? `<span class="prs">${[...s.prs].reverse().map((p) => `
-        <span class="pr" data-href="${esc(p.url)}" title="${esc(p.repo)} ${prName(p)}">PR ${prName(p)}</span>`).join('')}</span>` : ''}
+      <div class="f-row">
+        ${pct != null ? `<span class="ctx" title="context ${Math.round(pct)}%"><span class="meter ${pct > 75 ? 'hot' : ''}"><i style="width:${Math.min(100, pct)}%"></i></span>${Math.round(pct)}%</span>` : ''}
+        ${s.costUsd != null ? `<span>$${s.costUsd.toFixed(2)}</span>` : ''}
+        ${memHtml(s)}
+        <span>${s.turns} turn${s.turns === 1 ? '' : 's'}</span>
+        ${s.model ? `<span>${esc(shortModel(s.model))}</span>` : ''}
+      </div>
+      <div class="f-transient">
+        <div class="f-left">${msgBadgeHtml(s)}${shellsHtml(s)}${schedHtml(s)}${cacheHtml(s)}</div>
+        ${s.prs?.length ? `<span class="prs">${[...s.prs].reverse().map((p) => `
+          <span class="pr" data-href="${esc(p.url)}" title="${esc(p.repo)} ${prName(p)}">PR ${prName(p)}</span>`).join('')}</span>` : ''}
+      </div>
     </div>`)
   return parts.join('')
 }
+
+// The agent chips that wrapped onto the hidden second line become one +N chip,
+// which may itself push the last visible chip off. Needs layout, so it runs
+// after the tile is in the page, again when its width changes.
+function fitAgents(tile) {
+  const row = tile.querySelector('.agents')
+  const more = row?.querySelector('.more')
+  if (!more) return
+  const chips = [...row.querySelectorAll('.agent:not(.more)')]
+  for (const c of chips) c.classList.remove('cut')
+  more.hidden = true
+  const top = row.offsetTop
+  const off = (el) => el.offsetTop > top + 2
+  const cut = chips.filter(off)
+  if (!cut.length) return
+  for (const c of cut) c.classList.add('cut')
+  more.hidden = false
+  const shown = chips.filter((c) => !c.classList.contains('cut'))
+  const label = () => {
+    more.textContent = `+${cut.length}`
+    more.title = cut.map((c) => c.textContent.trim().replace(/\s+/g, ' ')).join('\n')
+  }
+  label()
+  while (off(more) && shown.length) {
+    const c = shown.pop()
+    c.classList.add('cut')
+    cut.unshift(c)
+    label()
+  }
+}
+
+// After every tile is placed, so one layout pass measures them all; and on
+// resize. A tile in a collapsed group has no width and is fitted when it opens.
+function fitTiles() {
+  for (const t of tiles.values()) {
+    const w = t.el.clientWidth
+    if (w && w !== t.fitW) { fitAgents(t.el); t.fitW = w }
+  }
+}
+addEventListener('resize', fitTiles)
 
 // ---- Groups ---------------------------------------------------------------
 
@@ -1367,7 +1435,7 @@ function render() {
     const cls = `tile s-${s.state}${isStale(s) ? ' stale' : ''}`
     if (t.el.className.replace(/\s*blip/, '') !== cls) t.el.className = cls
     const html = tileHtml(s)
-    if (html !== t.html) { t.el.innerHTML = html; t.html = html }
+    if (html !== t.html) { t.el.innerHTML = html; t.html = html; t.fitW = -1 }
     const lastEvent = s.events.at(-1)?.t ?? null
     if (t.lastEvent !== null && lastEvent !== t.lastEvent && s.state !== 'waiting') {
       t.el.classList.remove('blip'); void t.el.offsetWidth; t.el.classList.add('blip')
@@ -1375,6 +1443,7 @@ function render() {
     t.lastEvent = lastEvent
     if (grid.children[i] !== t.el) grid.insertBefore(t.el, grid.children[i] || null)
   })
+  fitTiles()
   const used = new Set(groups.map((g) => `${groupBy}:${g.key}`))
   for (const [id, sec] of sections) if (!used.has(id)) { sec.el.remove(); sections.delete(id) }
 

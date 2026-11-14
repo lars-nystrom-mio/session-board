@@ -34,6 +34,27 @@ C = '33333333-0000-4000-8000-000000000003'  # resurslogs, old hooks: no record o
 D = '44444444-0000-4000-8000-000000000004'  # got the resurslogs messages, old hooks
 F = '66666666-0000-4000-8000-000000000006'  # got a message from a session never on the board
 X = '77777777-0000-4000-8000-000000000007'  # in a sandbox, claims a message
+G = '88888888-0000-4000-8000-000000000008'  # everything on the footer at once
+
+
+def busy(now):
+    """A tile with every footer item, long names and more agents than fit."""
+    b = board(G, 'C:\\Workspace.mioit\\Mio.BI.Services.Export', 'idle', 'Issue #30395 code-review delivery', now=now)
+    b.update({
+        'model': 'claude-opus-5-5[1m]', 'turns': 13, 'costUsd': 3.18,
+        'context': {'percent': 10, 'tokens': 100_000, 'window': 1_000_000},
+        'memory': {'mb': 700, 'wsMb': 500, 'childMb': 112, 'history': [[now - i * MIN, 700 + i * 9] for i in range(6)]},
+        'cache': {'at': now - 2 * MIN, 'ttl': '1h'},
+        'crons': [{'id': 'c1', 'human': 'every 30 minutes', 'nextAt': now + 12 * MIN, 'recurring': True, 'prompt': 'check CI'}],
+        'shells': [{'id': 'b1', 'summary': 'npm test --watch', 'since': now - 3 * MIN}],
+        'prs': [{'url': f'https://dev.azure.com/x/_git/r/pullrequest/{n}', 'repo': 'Mio.BI', 'number': n, 'host': 'ado'}
+                for n in (37457, 37458)],
+        'agents': [{'agentId': f'a{i}', 'type': t, 'status': st, 'description': t}
+                   for i, (t, st) in enumerate([('general-purpose', 'idle'), ('wi-contract-review', 'done'),
+                                                ('wi-story', 'done'), ('code-reviewer', 'done'), ('Explore', 'failed')])],
+        'events': [{'t': now - (9 - i) * MIN, 'kind': 'tool', 'text': f'Bash · git push origin story/3039{i}'} for i in range(4)],
+    })
+    return b
 
 
 def board(sid, cwd, state='idle', title=None, messages=(), events=(), now=0):
@@ -67,6 +88,7 @@ def write_boards(root: Path):
             for i in range(5)]),
         board(F, 'C:\\Workspace.mioit\\dotnet-upgrade-kit', 'idle', now=now, events=[
             {'t': now - 70 * MIN, 'kind': 'prompt', 'text': envelope('mio-m3-sales-c7', 'c7', 'Please check these work items')}]),
+        busy(now),
     ]
     (root / 'sessions').mkdir()
     for b in sessions:
@@ -186,6 +208,28 @@ class MessagesView(unittest.TestCase):
         rows = self.page.locator('#d-body .mmsg')
         self.assertEqual(rows.count(), 2)
         self.assertIn('Probe reply', rows.first.inner_text())
+
+    def test_a_full_tile_keeps_the_height_and_cuts_nothing(self):
+        # 370px of viewport leaves the narrowest tile the grid allows.
+        for width in (1400, 370):
+            self.page.set_viewport_size({'width': width, 'height': 1000})
+            # The +N chip shows, on the visible line of the agents row.
+            self.page.wait_for_function(f'''(() => {{
+                const m = document.querySelector('.tile[data-session="{G}"] .agent.more:not([hidden])')
+                return m && m.getBoundingClientRect().bottom <= m.parentElement.getBoundingClientRect().bottom
+            }})()''')
+            heights = self.page.eval_on_selector_all('.tile', 'ts => ts.map((t) => t.offsetHeight)')
+            self.assertEqual(len(set(heights)), 1, f'tile heights at {width}px: {heights}')
+            # Every footer item and agent chip is either whole on its row or not shown at all.
+            cut = self.tile(G).evaluate('''(t) => [...t.querySelectorAll('.f-row > *, .f-left > *, .prs > *, .agents > *')]
+                .filter((el) => el.offsetParent && el.getClientRects().length)
+                .filter((el) => { const r = el.getBoundingClientRect(), p = el.parentElement.getBoundingClientRect()
+                  return r.top < p.bottom && (r.right > p.right + 0.5 || r.bottom > p.bottom + 0.5) })
+                .map((el) => el.textContent.trim())''')
+            self.assertEqual(cut, [], f'cut off at {width}px')
+        more = self.tile(G).locator('.agent.more')
+        self.assertRegex(more.inner_text(), r'^\+\d$')
+        self.assertTrue(more.get_attribute('title'))
 
 
 if __name__ == '__main__':
