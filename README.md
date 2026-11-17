@@ -52,6 +52,11 @@ folder.
 Serve only the board folder, never `.claude` itself: that holds your
 credentials and every session's transcript.
 
+`python -m http.server` answers any `Host`, so while it runs, a web page that
+points its own name at 127.0.0.1 (DNS rebinding) can read your status files.
+The bundled server below refuses every request not addressed to `127.0.0.1` or
+`localhost`; prefer it when you can.
+
 ### Queue work items from the board
 
 On Windows, serve the page with the bundled server instead, from this repo:

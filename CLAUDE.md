@@ -43,7 +43,8 @@ install it and how to serve the page. This file is for working on it.
   The page offers it as **+** on a project group and **new session** by the
   form, matching a group to a project by its sessions' repo root or cwd. It
   takes no free text, checks `Host`, `Origin` and the JSON content type, and
-  never answers CORS preflights. Memory pressure in the newest `machine`
+  never answers CORS preflights. GET and HEAD check `Host` too (`local_host`),
+  against DNS rebinding; a session's `curl 127.0.0.1:<port>` still passes. Memory pressure in the newest `machine`
   sample holds new starts (`memory_hold`, with hysteresis); the page's strip
   turns orange at the same marks, kept in step by hand (`RAM_HIGH_PCT`).
   Tests in `server/test_serve.py`.

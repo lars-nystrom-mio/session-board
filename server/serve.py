@@ -104,16 +104,30 @@ def known_projects(board: Path) -> list[dict]:
     return [{"path": p["path"], "name": p["name"]} for p in sorted(seen.values(), key=lambda p: -p["at"])]
 
 
+def local_host(headers, port: int) -> str | None:
+    """Why a request didn't name this server by a loopback address, or None if it did.
+
+    Every request goes through this, reads included. A page on another site
+    can point its own name at 127.0.0.1 (DNS rebinding) and then read the
+    board as if it were its own; its requests still carry its name as Host.
+    curl or a script in a session sends 127.0.0.1:<port> and passes.
+    """
+    host = headers.get("Host", "")
+    if host not in {f"127.0.0.1:{port}", f"localhost:{port}"}:
+        return f"unexpected Host {host!r}"
+    return None
+
+
 def same_origin(headers, port: int) -> str | None:
     """Why a request didn't come from the board page itself, or None if it did.
 
     The Host check stops DNS rebinding. The JSON content type makes a browser
     send a preflight first, which this server never answers with CORS headers.
     """
-    hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
-    host = headers.get("Host", "")
-    if host not in hosts:
-        return f"unexpected Host {host!r}"
+    refused = local_host(headers, port)
+    if refused:
+        return refused
+    host = headers["Host"]
     origin = headers.get("Origin")
     if origin is not None and origin != f"http://{host}":
         return f"unexpected Origin {origin!r}"
@@ -425,7 +439,16 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def do_HEAD(self):
+        refused = local_host(self.headers, self.port)
+        if refused:
+            return self.send_json(403, {"error": refused})
+        super().do_HEAD()
+
     def do_GET(self):
+        refused = local_host(self.headers, self.port)
+        if refused:
+            return self.send_json(403, {"error": refused})
         path = self.path.split("?")[0]
         if path == "/api/queue":
             return self.send_json(200, self.queue.view(known_projects(self.board)))

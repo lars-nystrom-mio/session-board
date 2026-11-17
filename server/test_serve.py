@@ -1,12 +1,15 @@
+import http.client
 import json
 import os
 import tempfile
+import threading
 import time
 import unittest
 import uuid
+from functools import partial
 from pathlib import Path
 
-from serve import GONE_MS, MACHINE_STALE_MS, START_MS, Queue, advance, check_launch, child_env, known_projects, launch_command, memory_hold, newest_machine, same_origin, slot_free
+from serve import GONE_MS, MACHINE_STALE_MS, START_MS, Handler, Queue, Server, advance, check_launch, child_env, known_projects, launch_command, memory_hold, newest_machine, same_origin, slot_free
 
 
 def write_session(board: Path, sid: str, **fields) -> None:
@@ -81,6 +84,55 @@ class SameOrigin(unittest.TestCase):
         self.assertIsNotNone(same_origin({**self.ok, "Host": "evil.example:8765"}, 8765))
         self.assertIsNotNone(same_origin({**self.ok, "Origin": "https://evil.example"}, 8765))
         self.assertIsNotNone(same_origin({**self.ok, "Content-Type": "text/plain"}, 8765))
+
+
+class HostCheckOverHttp(unittest.TestCase):
+    """Reads need a loopback Host too, so a DNS-rebound page can't read the board,
+    while a session querying it with curl or a script still can."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        board = Path(self.tmp.name)
+        write_session(board, "s1", cwd=self.tmp.name, updatedAt=1)
+        queue = Queue(board, "deliver #{id}", IDLE, 4, start=lambda *a: None)
+        handler = type("H", (Handler,), {"board": board, "port": 0, "queue": queue,
+                                         "log_message": lambda *a: None})
+        self.server = Server(("127.0.0.1", 0), partial(handler, directory=str(board)))
+        self.port = handler.port = self.server.server_address[1]
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.tmp.cleanup()
+
+    def request(self, method, path, host):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            conn.putrequest(method, path, skip_host=True)
+            conn.putheader("Host", host)
+            conn.endheaders()
+            res = conn.getresponse()
+            return res.status, res.read()
+        finally:
+            conn.close()
+
+    def test_sessions_can_read_by_loopback_name(self):
+        for host in (f"127.0.0.1:{self.port}", f"localhost:{self.port}"):
+            status, body = self.request("GET", "/api/queue", host)
+            self.assertEqual(status, 200)
+            self.assertIn("items", json.loads(body))
+            self.assertEqual(self.request("GET", "/sessions/s1.json", host)[0], 200)
+            self.assertEqual(self.request("HEAD", "/sessions/s1.json", host)[0], 200)
+
+    def test_other_names_are_refused(self):
+        for host in (f"evil.example:{self.port}", "127.0.0.1", f"127.0.0.1:{self.port + 1}", ""):
+            for method, path in (("GET", "/api/queue"), ("GET", "/sessions/"), ("GET", "/sessions/s1.json"),
+                                 ("GET", "/"), ("HEAD", "/sessions/s1.json")):
+                with self.subTest(host=host, method=method, path=path):
+                    status, body = self.request(method, path, host)
+                    self.assertEqual(status, 403)
+                    self.assertNotIn(b"cwd", body)
 
 
 class LaunchCommand(unittest.TestCase):
