@@ -415,6 +415,11 @@ class Handler(SimpleHTTPRequestHandler):
     board: Path
     port: int
     queue: Queue
+    log_ok: bool = True  # log requests that succeeded, not only errors and queue actions
+
+    def log_request(self, code="-", size="-"):
+        if self.log_ok or not isinstance(code, int) or code >= 400:
+            super().log_request(code, size)
 
     def send_json(self, status: int, data) -> None:
         body = json.dumps(data).encode()
@@ -455,6 +460,24 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_json(200, item)
 
 
+def log_to_file(board: Path) -> bool:
+    """Under pythonw.exe there is no console and sys.stderr is None, so
+    http.server's request log would raise; log to <board>/server.log instead.
+    Returns whether it did."""
+    if sys.stdout is not None and sys.stderr is not None:
+        return False
+    path = board / "server.log"
+    try:
+        if path.stat().st_size > 5_000_000:
+            os.replace(path, path.with_suffix(".log.1"))
+    except OSError:
+        pass
+    log = open(path, "a", encoding="utf-8", buffering=1)
+    sys.stdout = sys.stdout or log
+    sys.stderr = sys.stderr or log
+    return True
+
+
 def run_queue(queue: Queue) -> None:
     while True:
         try:
@@ -481,9 +504,11 @@ def main() -> None:
         sys.exit("--prompt must contain {id}")
     board = args.dir.resolve()
     board.mkdir(parents=True, exist_ok=True)
+    to_file = log_to_file(board)
     queue = Queue(board, args.prompt, int(args.idle_minutes * 60_000), args.max_sessions,
                   start=partial(launch, wt_profile=args.wt_profile))
-    handler = type("BoardHandler", (Handler,), {"board": board, "port": args.port, "queue": queue})
+    handler = type("BoardHandler", (Handler,), {"board": board, "port": args.port, "queue": queue,
+                                             "log_ok": not to_file})
     try:
         server = Server(("127.0.0.1", args.port), partial(handler, directory=str(board)))
     except OSError as e:

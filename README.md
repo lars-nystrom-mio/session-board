@@ -114,6 +114,26 @@ profile named by `--wt-profile` (`PowerShell`); without one it gets the plain
 console icon. Started from a Claude session, the server drops the `NO_COLOR=1`
 that Claude's shell sets, so sessions it starts keep their colors.
 
+To have the server run from logon, independent of any Claude session, register
+it as a scheduled task for your user. It has to run only while you're logged on,
+not as a service, so that it can open tabs on your desktop. `pythonw.exe` (next
+to `python.exe`) runs it without a console window; it then logs to `server.log`
+in the board folder, errors and queue actions only.
+
+```powershell
+$py = Join-Path (Split-Path (python -c "import sys;print(sys.executable)")) pythonw.exe
+$me = "$env:USERDOMAIN\$env:USERNAME"
+Register-ScheduledTask -TaskName SessionBoard -Force `
+  -Action (New-ScheduledTaskAction -Execute $py -Argument 'server\serve.py' -WorkingDirectory (Resolve-Path .)) `
+  -Trigger (New-ScheduledTaskTrigger -AtLogOn -User $me) `
+  -Principal (New-ScheduledTaskPrincipal -UserId $me -LogonType Interactive -RunLevel Limited) `
+  -Settings (New-ScheduledTaskSettingsSet -ExecutionTimeLimit 0 -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) `
+     -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew)
+schtasks /Run /TN SessionBoard   # start it now; stop any other server on 8765 first
+```
+
+Run it from the repo folder. `schtasks /End /TN SessionBoard` stops it.
+
 The projects are the folders that sessions on the board have run in (the repo's
 root when there is one). The form and the **+** appear once there is at least
 one. The server takes only a work item number and one of those folders, and refuses requests

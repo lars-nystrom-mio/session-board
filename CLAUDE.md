@@ -46,7 +46,9 @@ install it and how to serve the page. This file is for working on it.
   never answers CORS preflights. Memory pressure in the newest `machine`
   sample holds new starts (`memory_hold`, with hysteresis); the page's strip
   turns orange at the same marks, kept in step by hand (`RAM_HIGH_PCT`).
-  Tests in `server/test_serve.py`.
+  Under `pythonw.exe` (the `SessionBoard` scheduled task in the README) it has
+  no stdout/stderr, so `log_to_file` sends them to `<board>/server.log` and
+  successful requests aren't logged. Tests in `server/test_serve.py`.
 
 ## How the queue knows a session is finished
 
@@ -180,5 +182,3 @@ SESSION_BOARD_DIR=<scratch dir> claude -p --plugin-dir . --model haiku "<prompt 
   would need `$.process.run`, or the dashboard keeps hiding them after 24 h.
 - Let `board_status` report exact phases too, instead of phases inferred from
   subagent types (`DEFAULT_PHASES` and `phases.json`).
-- Run the server outside a Claude session, for example as a scheduled task at
-  logon.
