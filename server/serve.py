@@ -6,7 +6,7 @@
 GET serves the board folder like `python -m http.server`, directory index
 included, so the page reads `sessions/` the same way.
 
-GET  api/queue -> {"prompt", "maxSessions", "held", "projects": [{"path", "name", "max"}], "items": [...]}
+GET  api/queue -> {"prompt", "maxSessions", "held", "projects": [{"path", "name", "max", "busy"}], "items": [...]}
 POST api/queue {"action": "add", "workItem": "1234", "cwd": "<a path from projects>"}
                {"action": "cancel" | "first" | "release", "id": "<item id>"}
                {"action": "limit", "cwd": "<a path from projects>", "max": 2}
@@ -20,8 +20,10 @@ tab (or a new console window without it). The session then writes its own
 status file, which says when the slot is free again: the session called the
 board's board_status tool with "done" and its turn ended; it sat idle for
 --idle-minutes with nothing in the background or scheduled; it ended; or it
-stopped writing. "release" frees a slot by hand. Only items count against the
-limits, not sessions started some other way. While the newest memory sample a
+stopped writing. "release" frees a slot by hand. A session started some other
+way (by hand, or a /deliver outside the queue) takes a slot too while it is on a
+work item and would hold one by the same rules ("busy" per project); an idle chat
+session without a work item doesn't. While the newest memory sample a
 session wrote shows RAM or commit charge too high, nothing new starts ("held").
 The queue is kept in queue.json in
 the board folder, so a restart picks it up.
@@ -204,6 +206,33 @@ def slot_free(board: dict | None, started_at: int, now: int, idle_ms: int) -> st
     return None
 
 
+def outside_sessions(board: Path, queue_items: list[dict], now: int, idle_ms: int) -> dict[str, int]:
+    """How many live sessions outside the queue hold a slot, by project key.
+
+    Such a session is on a work item (`workItem` set) and would still hold its
+    slot by `slot_free`'s rules, were it a queue item. A queue item's own
+    session, in any state, never counts here: a released item stays released.
+    Projects match like `known_projects`: the repo root, else the cwd.
+    """
+    from_queue = {i.get("sessionId") for i in queue_items if i.get("sessionId")}
+    busy: dict[str, int] = {}
+    for f in (board / "sessions").glob("*.json"):
+        try:
+            s = json.loads(f.read_text(encoding="utf-8"))
+            path = (s.get("repo") or {}).get("root") or s["cwd"]
+            sid = s.get("sessionId") or f.stem
+            if not s.get("workItem") or sid in from_queue or f.stem in from_queue:
+                continue
+            if slot_free(s, 0, now, idle_ms):
+                continue
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            continue  # mid-write or malformed
+        if not isinstance(path, str) or not os.path.isabs(path):
+            continue
+        busy[key(path)] = busy.get(key(path), 0) + 1
+    return busy
+
+
 def newest_machine(board: Path, now: int) -> dict | None:
     """The newest machine memory sample any session wrote, or None if none is fresh."""
     best = None
@@ -236,13 +265,17 @@ def memory_hold(machine: dict | None, held: bool) -> str | None:
     return "memory " + ", ".join(over) if over else None
 
 
-def advance(queue: dict, boards: dict, now: int, idle_ms: int, max_sessions: int, hold: bool = False) -> list[dict]:
+def advance(queue: dict, boards: dict, now: int, idle_ms: int, max_sessions: int, hold: bool = False,
+            outside: dict[str, int] | None = None) -> list[dict]:
     """Frees the slots of running items whose sessions are finished, then marks
     queued items running, in order, while there's room and no `hold`. Returns
     the items to start; the caller starts them, and marks one failed if that fails.
 
     `boards` maps a session id to its status file, for the running items' sessions.
+    `outside` counts, by project key, sessions outside the queue that hold a slot
+    (`outside_sessions`): they count against both limits like running items.
     """
+    outside = outside or {}
     for item in queue["items"]:
         if item["state"] != "running":
             continue
@@ -252,9 +285,9 @@ def advance(queue: dict, boards: dict, now: int, idle_ms: int, max_sessions: int
     running = [i for i in queue["items"] if i["state"] == "running"]
     starting = []
     for item in queue["items"]:
-        if hold or item["state"] != "queued" or len(running) >= max_sessions:
+        if hold or item["state"] != "queued" or len(running) + sum(outside.values()) >= max_sessions:
             continue
-        here = sum(1 for i in running if key(i["cwd"]) == key(item["cwd"]))
+        here = outside.get(key(item["cwd"]), 0) + sum(1 for i in running if key(i["cwd"]) == key(item["cwd"]))
         if here >= queue["limits"].get(key(item["cwd"]), 1):
             continue
         item.update(state="running", startedAt=now, sessionId=str(uuid.uuid4()))
@@ -358,7 +391,8 @@ class Queue:
         now = int(time.time() * 1000)
         self.held = memory_hold(newest_machine(self.board, now), self.held is not None)
         live = {k: v for k, v in boards.items() if v is not None}
-        for item in advance(q, live, now, self.idle_ms, self.max_sessions, hold=self.held is not None):
+        outside = outside_sessions(self.board, q["items"], now, self.idle_ms)
+        for item in advance(q, live, now, self.idle_ms, self.max_sessions, hold=self.held is not None, outside=outside):
             prompt = self.prompt.replace("{id}", item["workItem"])
             try:
                 self.start(item["cwd"], prompt, item["sessionId"])
@@ -376,11 +410,13 @@ class Queue:
     def view(self, projects: list[dict]) -> dict:
         with self.lock:
             q = self.load()
+        busy = outside_sessions(self.board, q["items"], int(time.time() * 1000), self.idle_ms)
         return {
             "prompt": self.prompt,
             "maxSessions": self.max_sessions,
             "held": self.held,
-            "projects": [{**p, "max": q["limits"].get(key(p["path"]), 1)} for p in projects],
+            "projects": [{**p, "max": q["limits"].get(key(p["path"]), 1), "busy": busy.get(key(p["path"]), 0)}
+                         for p in projects],
             "items": q["items"],
         }
 
