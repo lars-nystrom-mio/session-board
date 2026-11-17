@@ -334,7 +334,16 @@ class Queue:
         trim(q)
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(q, indent=1), encoding="utf-8")
-        os.replace(tmp, self.path)
+        for attempt in range(10):
+            try:
+                os.replace(tmp, self.path)
+                return
+            except PermissionError:
+                # On Windows a scanner or reader that has either file open for a
+                # moment makes the rename fail; it frees it within milliseconds.
+                if attempt == 9:
+                    raise
+                time.sleep(0.05)
 
     def read_board(self, session_id: str) -> dict | None:
         try:
