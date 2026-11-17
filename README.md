@@ -72,8 +72,11 @@ A project runs one queued item at a time unless you raise its limit with the
 select next to it. Raise it only for repos where parallel sessions don't trip
 over each other: two sessions in one working copy share its checkout, its ports
 and its build output. `--max-sessions` (4) caps queued sessions across all
-projects. Only queued items count against these limits, not sessions you start
-yourself.
+projects. A session you start yourself counts too, once it is on a work item
+(say you ran `/deliver 1234` in that repo): while it would hold a slot by the
+rules below, a queued item for the same project waits for it. A session without
+a work item, such as a plain chat in the repo, doesn't count, and neither does a
+session started with **new session** until it picks up a work item.
 
 A slot frees when the session is finished:
 

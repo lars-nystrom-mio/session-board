@@ -38,6 +38,8 @@ install it and how to serve the page. This file is for working on it.
   item as an interactive `claude --session-id <uuid> "<prompt>"` when its
   project (a folder that some status file reports) has a free slot, one by
   default, and frees the slot from that session's status file (`slot_free`).
+  Live sessions outside the queue that are on a work item take slots too, by
+  the same `slot_free` rules (`outside_sessions`, `busy` per project).
   The `open` action starts an empty `claude --session-id <uuid>` in a project at
   once, outside the queue: no slot, no memory hold (the page confirms instead).
   The page offers it as **+** on a project group and **new session** by the

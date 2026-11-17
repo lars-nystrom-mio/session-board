@@ -6,7 +6,7 @@ import unittest
 import uuid
 from pathlib import Path
 
-from serve import GONE_MS, MACHINE_STALE_MS, START_MS, Queue, advance, check_launch, child_env, known_projects, launch_command, memory_hold, newest_machine, same_origin, slot_free
+from serve import GONE_MS, MACHINE_STALE_MS, START_MS, Queue, advance, check_launch, child_env, known_projects, launch_command, memory_hold, newest_machine, outside_sessions, same_origin, slot_free
 
 
 def write_session(board: Path, sid: str, **fields) -> None:
@@ -173,6 +173,58 @@ class Advance(unittest.TestCase):
         self.assertEqual([i["state"] for i in q["items"]], ["finished", "queued"])
 
 
+    def test_sessions_outside_the_queue_take_slots(self):
+        a = os.path.normcase(os.path.normpath("/a"))
+        q = {"limits": {}, "items": [item(1, "/a"), item(2, "/b")]}
+        started = advance(q, {}, 10, IDLE, 4, outside={a: 1})
+        self.assertEqual([i["workItem"] for i in started], ["2"])
+        q = {"limits": {a: 2}, "items": [item(1, "/a")]}
+        self.assertEqual(len(advance(q, {}, 10, IDLE, 4, outside={a: 1})), 1)
+        q = {"limits": {}, "items": [item(1, "/a")]}
+        self.assertEqual(advance(q, {}, 10, IDLE, 2, outside={"/x": 1, "/y": 1}), [])  # the global cap
+
+
+class OutsideSessions(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.board = Path(self.tmp.name)
+        self.repo = os.path.normpath(self.tmp.name + "/repo")
+        self.now = int(time.time() * 1000)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def write(self, sid, **fields):
+        fields = {"sessionId": sid, "cwd": self.repo + "/sub", "repo": {"root": self.repo, "name": "repo"},
+                  "workItem": "7", "state": "running", "updatedAt": self.now, "stateSince": self.now, **fields}
+        write_session(self.board, sid, **fields)
+
+    def test_counts_live_work_item_sessions_by_repo_root(self):
+        self.write("a")
+        self.write("b", repo=None, cwd=self.repo + os.sep)  # no repo: its cwd, normalized
+        self.write("c", state="waiting", cwd=self.tmp.name + "/other", repo=None)
+        got = outside_sessions(self.board, [], self.now, IDLE)
+        self.assertEqual(got, {os.path.normcase(self.repo): 2,
+                               os.path.normcase(os.path.normpath(self.tmp.name + "/other")): 1})
+
+    def test_ignores_idle_chats_ended_stale_finished_and_queue_items(self):
+        self.write("chat", workItem=None)
+        self.write("ended", state="ended")
+        self.write("gone", updatedAt=self.now - GONE_MS - 1)
+        self.write("done", state="idle", done={"at": 1})
+        self.write("idle", state="idle", stateSince=self.now - IDLE)
+        self.write("queued", state="running")
+        self.write("relative", cwd="relative", repo=None)
+        (self.board / "sessions" / "broken.json").write_text("{", encoding="utf-8")
+        (self.board / "sandboxed").mkdir()
+        (self.board / "sandboxed" / "x.json").write_text(json.dumps(
+            {"sessionId": "x", "cwd": self.repo, "workItem": "7", "state": "running", "updatedAt": self.now}), encoding="utf-8")
+        items = [item(1, self.repo, "finished", sessionId="queued")]
+        self.assertEqual(outside_sessions(self.board, items, self.now, IDLE), {})
+        self.write("idle", state="idle", stateSince=self.now - IDLE + 60_000)  # not idle long enough yet
+        self.assertEqual(outside_sessions(self.board, items, self.now, IDLE), {os.path.normcase(self.repo): 1})
+
+
 class MemoryHold(unittest.TestCase):
     def test_thresholds_and_release(self):
         m = lambda ram, commit: {"ramMb": ram, "ramTotalMb": 100, "commitMb": commit, "commitLimitMb": 100}
@@ -274,6 +326,25 @@ class QueueActions(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not on PATH"):
             self.queue.act({"action": "open", "cwd": self.repo}, self.projects)
         self.assertEqual(self.started, [])
+
+    def test_a_session_started_by_hand_holds_the_slot(self):
+        write_session(self.board, "manual", sessionId="manual", cwd=self.repo, repo=None, workItem="9",
+                      state="running", updatedAt=int(time.time() * 1000))
+        self.assertEqual(self.queue.view(self.projects)["projects"][0]["busy"], 1)
+        self.assertEqual(self.add(1)["state"], "queued")
+        write_session(self.board, "manual", sessionId="manual", cwd=self.repo, repo=None, workItem="9",
+                      state="ended", updatedAt=int(time.time() * 1000))
+        self.queue.tick()
+        self.assertEqual(len(self.started), 1)
+        self.assertEqual(self.queue.view(self.projects)["projects"][0]["busy"], 0)
+        # The item's own session, once it writes, is a queue item, not an outside one.
+        sid = self.started[0][2]
+        write_session(self.board, sid, sessionId=sid, cwd=self.repo, repo=None, workItem="1",
+                      state="running", updatedAt=int(time.time() * 1000))
+        self.assertEqual(self.queue.view(self.projects)["projects"][0]["busy"], 0)
+        self.add(2)
+        self.queue.tick()
+        self.assertEqual(len(self.started), 1)
 
     def test_a_failed_start_is_marked_and_frees_the_slot(self):
         def fail(*a):
