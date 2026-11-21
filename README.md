@@ -157,7 +157,9 @@ projects. A session you start yourself counts too, once it is on a work item
 (say you ran `/deliver 1234` in that repo): while it would hold a slot by the
 rules below, a queued item for the same project waits for it. A session without
 a work item, such as a plain chat in the repo, doesn't count, and neither does a
-session started with **new session** until it picks up a work item.
+session started with **new session** until it picks up a work item, or an
+orchestrating session with a plan. Against `--max-sessions` such a session
+counts only while its project has items queued or running.
 
 A slot frees when the session is finished:
 
