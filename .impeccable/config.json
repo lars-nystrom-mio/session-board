@@ -20,6 +20,15 @@
         ],
         "createdAt": "2026-10-23T06:03:02.012Z",
         "reason": "Claude's judgment: the pink glow is the dashboard's only 'needs you' alert, intentional and limited to waiting tiles"
+      },
+      {
+        "rule": "pulsing-dot",
+        "value": "*",
+        "files": [
+          "dashboard/index.html"
+        ],
+        "createdAt": "2026-11-21T14:22:48.698Z",
+        "reason": "Claude: the pulses mark live session states (running, needs you, agents running), polled every 2 s; the page used them before this change and plan nodes mirror them"
       }
     ]
   }

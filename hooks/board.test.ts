@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
-import { addMessage, crossSessionMessage, peerNotice, sendTarget, MAX_MESSAGES, boardStatus, plannedWork, pruneShells, shellReported, shellToolDone, SHELL_MAX_MS, addPrs, adoOrgOf, cronFired, cronToolDone, nextCronMatch, pruneCrons, CRON_EXPIRY_MS, WAKEUP_ID, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, childLabel, deriveState, freshBoard, memoryOf, parseMachine, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, summarize, toolLabel, trimAgents, workItemOf, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
+import { addMessage, crossSessionMessage, peerNotice, sendTarget, MAX_MESSAGES, boardStatus, boardPlan, planWaiting, plannedWork, pruneShells, shellReported, shellToolDone, SHELL_MAX_MS, addPrs, adoOrgOf, cronFired, cronToolDone, nextCronMatch, pruneCrons, CRON_EXPIRY_MS, WAKEUP_ID, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, childLabel, deriveState, freshBoard, memoryOf, parseMachine, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, summarize, toolLabel, trimAgents, workItemOf, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
 
 describe('summaries', () => {
   test('a tool call becomes one short line', async () => {
@@ -426,6 +426,96 @@ describe('board_status', () => {
     boardStatus(board, { status: 'working' }, 7)
     expect(board.done).toBe(null)
   })
+})
+
+describe('board_plan', () => {
+  const plan = {
+    workItem: '#24190', title: 'Completeness view',
+    questions: ['Is the log feed in place?'],
+    items: [
+      { workItem: '26099', title: 'Bug one', type: 'Bug', start: 'now' },
+      { workItem: 26098, title: 'Bug two', type: 'Bug', start: 'now' },
+      { workItem: '26219', title: 'Overlap', start: 'later', after: ['26098', '26219', 'bad id!'], proposed: true },
+      { workItem: '29581', title: 'SFTP row', start: 'hold', question: 1 },
+      { workItem: '26100', title: 'Docs', start: 'skip', reason: 'tasks get no session' },
+      { workItem: '26099', title: 'repeated', start: 'now' },
+      { title: 'no id', start: 'now' },
+    ],
+  }
+
+  test('records the plan, cleaned, and a gate while it waits for the go', () => {
+    const board = freshBoard('s1', '/x', 0)
+    expect(boardPlan(board, plan, 5)).toMatch(/5 items, 4 to deliver.*waiting for the user.*left out/)
+    expect(board.plan?.workItem).toBe('24190')
+    expect(board.plan?.items.map((i) => i.workItem)).toEqual(['26099', '26098', '26219', '29581', '26100'])
+    expect(board.plan?.items[2]?.after).toEqual(['26098'])
+    expect(board.plan?.items[2]?.proposed).toBe(true)
+    expect(board.plan?.items[3]?.question).toBe(1)
+    expect(board.plan?.gate).toEqual({ since: 5, questions: ['Is the log feed in place?'] })
+    expect(planWaiting(board)).toEqual({ kind: 'plan', detail: 'Go-ahead for the plan for #24190, and 1 answer', since: 5 })
+  })
+
+  test('a new call replaces the plan and keeps the gate time', () => {
+    const board = freshBoard('s1', '/x', 0)
+    boardPlan(board, { ...plan, questions: [], waitingForGo: true }, 5)
+    boardPlan(board, { ...plan, questions: [], waitingForGo: true, items: [{ workItem: '1', title: 'a', start: 'bogus', question: 3 }] }, 9)
+    expect(board.plan?.items).toEqual([{ workItem: '1', title: 'a', type: '', start: 'now', after: [], proposed: false, question: null, reason: '' }])
+    expect(board.plan?.gate?.since).toBe(5)
+    boardPlan(board, { ...plan, questions: [] }, 12)
+    expect(board.plan?.gate).toBe(null)
+    expect(planWaiting(board)).toBe(null)
+  })
+
+  test('refuses an empty plan and clears on request', () => {
+    const board = freshBoard('s1', '/x', 0)
+    expect(boardPlan(board, { items: [] }, 1)).toMatch(/Nothing recorded/)
+    expect(board.plan).toBe(undefined)
+    boardPlan(board, plan, 2)
+    expect(boardPlan(board, { clear: true }, 3)).toMatch(/Removed/)
+    expect(board.plan).toBe(null)
+  })
+})
+
+test('a plan waiting for the go keeps the session waiting until the person replies', async ($, on) => {
+  const clock = mock.clock(on, { now: 1_000 })
+  mock.env(on, { SESSION_BOARD_DIR: '/board' })
+  const files = new Map<string, string>()
+  on('session.id', () => ({ value: 's1' }))
+  on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  on('fs.exists', (_$, e) => ({ value: files.has(e.path) }))
+  on('fs.read', (_$, e) => ({ value: files.get(e.path) ?? '' }))
+  on('fs.write', (_$, e) => {
+    files.set(e.path, e.text)
+    return { value: undefined }
+  })
+  on('fs.list', () => ({ value: [] }))
+  on('turn.start', (_$, e) => ({ turnId: e.turnId }))
+  on('turn.complete', () => ({ text: '' }))
+  const status = async () => {
+    await clock.advance(1_000)
+    const [, text] = [...files].find(([path]) => /[\\/]sessions[\\/]s1\.json$/.test(path)) ?? []
+    return JSON.parse(text ?? '{}')
+  }
+
+  await $.session.start({ cwd: '/x', surface: null, isInteractive: true })
+  await $.turn.start({ text: 'orchestrate feature 24190', turnId: 't1' })
+  const result = await $.tool.call({
+    tool: 'mcp__session-board__board_plan', workItem: '24190', waitingForGo: true,
+    items: [{ workItem: '26099', title: 'Bug one', start: 'now' }],
+  })
+  expect(String(result.result)).toMatch(/Plan on the board/)
+  expect((await status()).state).toBe('running')
+  await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  const waiting = await status()
+  expect(waiting.state).toBe('waiting')
+  expect(waiting.waiting?.kind).toBe('plan')
+  expect(waiting.plan?.items?.[0]?.workItem).toBe('26099')
+
+  await $.turn.start({ text: 'go', turnId: 't2' })
+  await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't2', reason: 'answer' })
+  const after = await status()
+  expect(after.state).toBe('idle')
+  expect(after.plan?.gate).toBe(null)
 })
 
 describe('planned work', () => {

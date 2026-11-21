@@ -536,6 +536,88 @@
     .ev { grid-template-columns: 52px 1fr; }
     .ev .k { display: none; }
   }
+  /* Plans: an orchestrator's plan, from board_plan.
+     It sits at the top of the group that holds the orchestrator. Each row is
+     one work item; the rail on the left draws its "after" links. */
+  .plans:empty { display: none; }
+  .plans { display: grid; gap: 14px; margin-bottom: 14px; }
+  .plan {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    box-shadow: var(--lift); overflow: hidden; animation: enter .35s ease both;
+  }
+  .plan.gate { border-color: color-mix(in srgb, var(--you) 60%, var(--line)); }
+  .p-head { display: flex; align-items: baseline; gap: 10px; min-width: 0; padding: 10px 14px 9px; border-bottom: 1px solid var(--line); }
+  .p-head .wi { font-family: var(--mono); font-size: 12.5px; color: var(--run); flex: none; }
+  .p-title { font-weight: 600; font-size: 13.5px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .p-tally { flex: none; display: flex; gap: 12px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .p-tally b { color: var(--text); font-weight: 600; }
+  .p-tally .ok b { color: var(--ok); }
+  .p-tally .run b { color: var(--run); }
+  .p-tally .you b { color: var(--you); }
+  .p-by {
+    flex: none; margin-left: auto; padding: 1px 8px; border: 1px solid var(--line); border-radius: 5px;
+    background: var(--bg); color: var(--muted); font: inherit; font-size: 11.5px; cursor: pointer;
+    max-width: 30ch; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .p-by:hover { color: var(--text); border-color: var(--muted); }
+  .p-by:focus-visible, .p-row:focus-visible { outline: 2px solid var(--run); outline-offset: -2px; }
+  .p-gate {
+    display: grid; grid-template-columns: auto 1fr; column-gap: 10px; row-gap: 6px;
+    padding: 10px 14px 11px; border-bottom: 1px solid color-mix(in srgb, var(--you) 30%, var(--line));
+    background: color-mix(in srgb, var(--you) 7%, var(--panel));
+  }
+  .p-gate .dot { width: 8px; height: 8px; margin-top: 5px; border-radius: 50%; background: var(--you); animation: pulse .9s ease-in-out infinite; }
+  .p-gate .say { font-size: 13px; color: var(--text); }
+  .p-gate .say b { color: var(--you); font-weight: 600; }
+  .p-gate .say .t { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-left: 6px; }
+  .p-gate ol { grid-column: 2; margin: 0; padding: 0; list-style: none; display: grid; gap: 3px; counter-reset: q; }
+  .p-gate li { counter-increment: q; display: grid; grid-template-columns: 26px 1fr; font-size: 12.5px; line-height: 1.45; color: var(--muted); }
+  .p-gate li::before { content: "Q" counter(q); font-family: var(--mono); font-size: 11px; line-height: 18px; color: var(--you); }
+  .p-rows { position: relative; padding: 4px 0 6px; }
+  .p-rail { position: absolute; left: 0; top: 4px; width: 50px; pointer-events: none; overflow: visible; }
+  .p-rail path { fill: none; stroke: var(--faint); stroke-width: 1.4; stroke-linecap: round; }
+  .p-rail path.proposed { stroke-dasharray: 3 3.5; }
+  .p-rail path.met { stroke: color-mix(in srgb, var(--ok) 70%, var(--line)); }
+  .p-row {
+    /* 32px: PLAN_ROW_H in the script */
+    display: grid; grid-template-columns: 50px 60px 50px minmax(0, 1fr) minmax(180px, auto);
+    align-items: center; height: 32px; width: 100%; padding: 0 14px 0 0; column-gap: 8px;
+    background: none; border: 0; text-align: left; font: inherit; color: var(--text);
+  }
+  button.p-row { cursor: pointer; }
+  button.p-row:hover { background: var(--card-hover); }
+  .p-row .node { justify-self: start; margin-left: 9px; width: 10px; height: 10px; border-radius: 50%; position: relative; z-index: 1; }
+  .p-row .id { font-family: var(--mono); font-size: 12px; color: var(--run); font-variant-numeric: tabular-nums; }
+  .p-row .ty { font-size: 10.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--faint); }
+  .p-row .tx { font-size: 13px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .p-row .st { justify-self: end; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .p-row .st .t { font-family: var(--mono); font-size: 11px; }
+  .p-row .tag { padding: 0 6px; border: 1px dashed var(--faint); border-radius: 5px; font-size: 10.5px; line-height: 16px; color: var(--muted); }
+  .n-ready .node   { background: var(--panel); box-shadow: inset 0 0 0 1.6px var(--muted); }
+  .n-later .node   { background: var(--panel); box-shadow: inset 0 0 0 1.4px var(--faint); }
+  .n-hold .node    { background: var(--panel); box-shadow: inset 0 0 0 1.6px var(--warn); }
+  .n-running .node { background: var(--run); animation: pulse 1.4s ease-in-out infinite; }
+  .n-background .node { background: var(--bg-agent); animation: pulse 2.4s ease-in-out infinite; }
+  .n-waiting .node { background: var(--you); animation: pulse .9s ease-in-out infinite; }
+  .n-idle .node    { background: var(--panel); box-shadow: inset 0 0 0 3px var(--ok); }
+  .n-done .node    { background: var(--ok); }
+  .n-ended .node   { background: var(--faint); }
+  .n-skip .node    { margin-left: 10px; width: 8px; height: 2px; border-radius: 1px; background: var(--faint); }
+  .n-running .st   { color: var(--run); }
+  .n-background .st { color: var(--bg-agent); }
+  .n-waiting .st   { color: var(--you); font-weight: 600; }
+  .n-done .st      { color: var(--ok); }
+  .n-hold .st      { color: var(--warn); }
+  .n-done .tx, .n-ended .tx { color: var(--muted); }
+  .n-skip .id, .n-skip .tx { color: var(--faint); }
+  .n-skip .st { color: var(--faint); font-style: italic; }
+  .n-waiting { background: color-mix(in srgb, var(--you) 6%, transparent); }
+  .tile.linked { outline: 2px solid color-mix(in srgb, var(--run) 70%, transparent); outline-offset: 2px; }
+  @media (max-width: 720px) {
+    .p-row { grid-template-columns: 50px 56px minmax(0, 1fr) auto; }
+    .p-row .ty { display: none; }
+    .p-tally { display: none; }
+  }
 </style>
 </head>
 <body>
@@ -686,7 +768,7 @@ function defang(raw) {
   if (!b || typeof b !== 'object' || Array.isArray(b) || !SESSION_ID.test(b.sessionId)) return null
   for (const k of LIST_KEYS) b[k] = (Array.isArray(b[k]) ? b[k] : []).filter((x) => x && typeof x === 'object')
   for (const k of TEXT_KEYS) if (typeof b[k] !== 'string') b[k] = null
-  for (const k of ['repo', 'waiting', 'skill', 'context', 'cache', 'done']) {
+  for (const k of ['repo', 'waiting', 'skill', 'context', 'cache', 'done', 'plan']) {
     if (!b[k] || typeof b[k] !== 'object' || Array.isArray(b[k])) b[k] = null
   }
   if (!(b.state in STATE_WORD)) b.state = 'idle'
@@ -1314,6 +1396,145 @@ function fitTiles() {
 }
 addEventListener('resize', fitTiles)
 
+// ---- Plans ----------------------------------------------------------------
+
+// A plan of work items that a planning session (an orchestrator) published with
+// board_plan. The board only draws it, at the top of the orchestrator's group:
+// each item's progress comes from the session that reports its work item.
+const PLAN_TYPE = { Bug: 'bug', 'User Story': 'story', Story: 'story', Task: 'task', Feature: 'feat', Epic: 'epic' }
+const PLAN_STARTS = new Set(['now', 'later', 'hold', 'skip'])
+const PLAN_ROW_H = 32  // keep in step with .p-row's height
+
+// The plan in a status file, in the shape the strip relies on, or null.
+function planOf(s) {
+  const p = s.plan
+  if (!p || typeof p !== 'object' || !Array.isArray(p.items)) return null
+  const text = (v) => (typeof v === 'string' ? v : '')
+  const items = p.items.filter((i) => i && typeof i === 'object' && typeof i.workItem === 'string' && i.workItem).map((i) => ({
+    workItem: i.workItem,
+    title: text(i.title),
+    type: text(i.type),
+    start: PLAN_STARTS.has(i.start) ? i.start : 'now',
+    after: Array.isArray(i.after) ? i.after.filter((a) => typeof a === 'string') : [],
+    proposed: i.proposed === true,
+    question: Number.isInteger(i.question) ? i.question : null,
+    reason: text(i.reason),
+  }))
+  if (!items.length) return null
+  const g = p.gate && typeof p.gate === 'object' ? p.gate : null
+  return {
+    workItem: text(p.workItem),
+    title: text(p.title),
+    gate: g ? { since: Number(g.since) || 0, questions: Array.isArray(g.questions) ? g.questions.filter((q) => typeof q === 'string') : [] } : null,
+    items,
+  }
+}
+
+// The session on each work item: the newest one, and one outside a sandbox over
+// one inside, since a sandbox's file could claim any work item.
+function sessionsByWorkItem() {
+  const list = sessions.filter((s) => s.workItem)
+    .sort((a, b) => (b.sandboxed ? 1 : 0) - (a.sandboxed ? 1 : 0) || a.startedAt - b.startedAt)
+  return new Map(list.map((s) => [s.workItem, s]))
+}
+
+function planItemState(item, plan, bySession) {
+  if (item.start === 'skip') return { cls: 'skip', text: esc(item.reason || 'skipped') }
+  const s = bySession.get(item.workItem)
+  if (s?.done) return { cls: 'done', s, text: `✓ done <span class="t">${esc(clock(s.done.at).slice(0, 5))}</span>` }
+  if (s && (s.state === 'ended' || isStale(s))) return { cls: 'ended', s, text: 'ended, not done' }
+  if (s) {
+    const word = s.state === 'waiting' ? (s.waiting?.kind === 'plan' ? 'plan to approve' : 'needs you') : STATE_WORD[s.state]
+    return { cls: s.state, s, text: `${esc(word)} <span class="t">${live(s.stateSince)}</span>` }
+  }
+  if (item.start === 'hold') return { cls: 'hold', text: 'on hold' + (item.question ? ' · Q' + item.question : '') }
+  const open = item.after.filter((id) => !bySession.get(id)?.done)
+  if (open.length) {
+    return { cls: 'later', text: (item.proposed ? '<span class="tag">proposed</span>' : '') + 'after ' + open.map((id) => '#' + esc(id)).join(', ') }
+  }
+  return { cls: 'ready', text: plan.gate ? 'starts on your go' : 'not started' }
+}
+
+// The rail: a line from each item to every item that waits for it, bowing out
+// right of the nodes. Each line takes the first lane free over its rows; lines
+// into the same item may share one, so they meet at its node.
+function planRail(items, rows) {
+  const at = new Map(items.map((it, i) => [it.workItem, i]))
+  const edges = []
+  for (const [j, it] of items.entries()) for (const id of it.after) {
+    const i = at.get(id)
+    if (i != null && i < j) edges.push({ i, j, it })
+  }
+  edges.sort((a, b) => (a.j - a.i) - (b.j - b.i) || a.i - b.i)
+  const lanes = []
+  for (const e of edges) {
+    let k = 0
+    while ((lanes[k] || []).some((o) => e.i < o.j && o.i < e.j && o.j !== e.j)) k++
+    ;(lanes[k] ||= []).push(e)
+    e.k = Math.min(k, 3)
+  }
+  const paths = edges.map(({ i, j, it, k }) => {
+    const y1 = i * PLAN_ROW_H + PLAN_ROW_H / 2, y2 = j * PLAN_ROW_H + PLAN_ROW_H / 2
+    const x0 = 19, x = 25 + k * 6, r = 4
+    const cls = [it.proposed ? 'proposed' : '', rows[i].cls === 'done' ? 'met' : ''].join(' ').trim()
+    return `<path class="${cls}" d="M${x0} ${y1} H${x - r} q${r} 0 ${r} ${r} V${y2 - r} q0 ${r} ${-r} ${r} H${x0}"/>`
+  })
+  return `<svg class="p-rail" height="${items.length * PLAN_ROW_H}" aria-hidden="true">${paths.join('')}</svg>`
+}
+
+function planHtml(o, plan, bySession) {
+  // In the orchestrator's order; skipped items last.
+  const items = [...plan.items.filter((i) => i.start !== 'skip'), ...plan.items.filter((i) => i.start === 'skip')]
+  const rows = items.map((it) => planItemState(it, plan, bySession))
+  const n = (c) => rows.filter((r) => c.includes(r.cls)).length
+  const deliver = items.filter((i) => i.start !== 'skip').length
+  const tally = [
+    [n(['done']), 'ok', 'of ' + deliver + ' done'],
+    [n(['running', 'background']), 'run', 'running'],
+    [n(['waiting']), 'you', n(['waiting']) === 1 ? 'needs you' : 'need you'],
+  ].map(([k, c, w], i) => (k || !i ? `<span class="${c}"><b>${k}</b> ${esc(w)}</span>` : '')).join('')
+  const by = o.tabTitle || (o.skill ? '/' + o.skill.name : 'orchestrator')
+  const qs = plan.gate?.questions || []
+  const started = rows.some((r) => r.s)
+  const gate = !plan.gate ? '' : `
+    <div class="p-gate" role="status">
+      <span class="dot"></span>
+      <div class="say"><b>Waiting for your go</b>${qs.length ? ' and ' + qs.length + (qs.length === 1 ? ' answer' : ' answers') : ''}${started ? '' : ' · nothing has started'}<span class="t">${live(plan.gate.since)}</span></div>
+      ${qs.length ? '<ol>' + qs.map((q) => '<li>' + esc(q) + '</li>').join('') + '</ol>' : ''}
+    </div>`
+  const body = items.map((it, i) => {
+    const r = rows[i]
+    const tag = r.s ? 'button' : 'div'
+    const attrs = r.s ? ` data-session="${esc(r.s.sessionId)}" data-plan-link="${esc(r.s.sessionId)}" title="open the session on #${esc(it.workItem)}"` : ''
+    const type = Object.hasOwn(PLAN_TYPE, it.type) ? PLAN_TYPE[it.type] : it.type
+    return `<${tag} class="p-row n-${r.cls}"${attrs}>
+      <span class="node"></span>
+      <span class="id">#${esc(it.workItem)}</span>
+      <span class="ty">${esc(type)}</span>
+      <span class="tx" title="${esc(it.title)}">${esc(it.title)}</span>
+      <span class="st">${r.text}</span>
+    </${tag}>`
+  }).join('')
+  return `
+    <div class="plan${plan.gate ? ' gate' : ''}">
+      <div class="p-head">
+        ${plan.workItem ? `<span class="wi">#${esc(plan.workItem)}</span>` : ''}
+        <span class="p-title" title="${esc(plan.title)}">${esc(plan.title || 'Plan')}</span>
+        <span class="p-tally">${tally}</span>
+        <button class="p-by" data-session="${esc(o.sessionId)}" title="open the session that made the plan">${esc(by)}</button>
+      </div>
+      ${gate}
+      <div class="p-rows">${planRail(items, rows)}${body}</div>
+    </div>`
+}
+
+// Hovering a plan row outlines its tile, so the two read as one thing.
+document.addEventListener('pointerover', (e) => {
+  const row = e.target.closest?.('[data-plan-link]')
+  for (const t of document.querySelectorAll('.tile.linked')) if (!row || t.dataset.session !== row.dataset.planLink) t.classList.remove('linked')
+  if (row) tiles.get(row.dataset.planLink)?.el.classList.add('linked')
+})
+
 // ---- Groups ---------------------------------------------------------------
 
 const STATE_BITS = [['waiting', 'you', 'need you'], ['running', 'run', 'running'], ['background', 'bg', 'background'], ['idle', '', 'idle']]
@@ -1410,9 +1631,9 @@ function render() {
       const el = document.createElement('section')
       el.className = 'group'
       el.innerHTML = `<div class="g-bar"><button class="g-head"></button><button class="g-new" hidden>
-        <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M5 1v8M1 5h8"/></svg></button></div><div class="grid"></div>`
+        <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M5 1v8M1 5h8"/></svg></button></div><div class="plans"></div><div class="grid"></div>`
       const bar = el.firstChild
-      sec = { el, bar, head: bar.firstChild, add: bar.lastChild, grid: el.lastChild, html: '' }
+      sec = { el, bar, head: bar.firstChild, add: bar.lastChild, plans: el.children[1], grid: el.lastChild, html: '', plansHtml: '' }
       sec.head.dataset.groupToggle = id
       sections.set(id, sec)
     }
@@ -1429,6 +1650,10 @@ function render() {
       sec.add.setAttribute('aria-label', sec.add.title)
     }
     sec.grid.hidden = isCollapsed
+    // Plans of the group's sessions, above its tiles. A collapsed group shows none.
+    const plans = isCollapsed ? [] : g.list.map((s) => [s, planOf(s)]).filter(([, p]) => p)
+    const plansHtml = plans.length ? (() => { const by = sessionsByWorkItem(); return plans.map(([s, p]) => planHtml(s, p, by)).join('') })() : ''
+    if (plansHtml !== sec.plansHtml) { sec.plans.innerHTML = plansHtml; sec.plansHtml = plansHtml }
     const html = groupBy === 'none' ? '' : groupHeadHtml(g)
     if (html !== sec.html) { sec.head.innerHTML = html; sec.html = html }
     if (container.children[i] !== sec.el) container.insertBefore(sec.el, container.children[i] || null)

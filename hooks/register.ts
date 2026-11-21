@@ -7,6 +7,7 @@ import {
   type PrRec,
   type ToolRec,
   type Waiting,
+  BOARD_PLAN_TOOL,
   BOARD_QUEUE_TOOL,
   BOARD_STATUS_TOOL,
   QUIET_TOOLS,
@@ -16,6 +17,7 @@ import {
   adoPrShowArgv,
   cacheTtlOf,
   agentStatusOf,
+  boardPlan,
   boardStatus,
   clip,
   cronFired,
@@ -32,6 +34,7 @@ import {
   pruneCrons,
   pruneShells,
   plannedWork,
+  planWaiting,
   peerNotice,
   pushEvent,
   scansForPrs,
@@ -97,6 +100,7 @@ const tools = new Map<string, ToolRec>()
 // What the model calls board_status as: mcp__<plugin>__board_status.
 let boardTool = 'mcp__session-board__board_status'
 let queueTool = 'mcp__session-board__board_queue'
+let planTool = 'mcp__session-board__board_plan'
 
 const now = () => Date.now()
 
@@ -338,10 +342,11 @@ async function init($: EngineInterface, cwd: string, interactive: boolean, reaso
   board.shells ??= []
   board.messages ??= []
   board.done ??= null
+  board.plan ??= null
   transcriptPath = ''
   memoryPid = 0
   memoryFailures = 0
-  board.waiting = null
+  board.waiting = planWaiting(board)
   if (board.state === 'running') board.state = 'idle'
   mainRunning = false
   tools.clear()
@@ -357,6 +362,10 @@ async function init($: EngineInterface, cwd: string, interactive: boolean, reaso
   try {
     // Deferred: only planning sessions need it, so it costs the rest nothing.
     queueTool = (await $.tool.register({ ...BOARD_QUEUE_TOOL, isDeferred: true })).tool
+  } catch {}
+  try {
+    // Deferred too: only orchestrating sessions publish a plan.
+    planTool = (await $.tool.register({ ...BOARD_PLAN_TOOL, isDeferred: true })).tool
   } catch {}
   await copyDashboard($, dir)
   await refreshSlow($)
@@ -383,6 +392,16 @@ async function boardStatusCalled($: EngineInterface, input: Record<string, unkno
   if (!b) return 'The board is not running in this session; nothing recorded.'
   const reply = boardStatus(b, input, now())
   event('turn', b.done ? `done${b.done.note ? `: ${b.done.note}` : ''}` : 'working again')
+  schedule($)
+  return reply
+}
+
+// The board's plan tool: a planning session shows its plan of work items.
+async function boardPlanCalled($: EngineInterface, input: Record<string, unknown>): Promise<string> {
+  const b = await ensure($)
+  if (!b) return 'The board is not running in this session; nothing recorded.'
+  const reply = boardPlan(b, input, now())
+  event('turn', b.plan ? `plan: ${b.plan.items.length} items${b.plan.gate ? ', waiting for the go' : ''}` : 'plan removed')
   schedule($)
   return reply
 }
@@ -487,6 +506,8 @@ async function turnStarted($: EngineInterface, text: string) {
     b.promptAt = now()
     event('prompt', shown)
     if (slash) setSkill(slash.name, slash.args)
+    // The person replied, which answers a plan waiting for their go.
+    if (b.plan?.gate) b.plan.gate = null
     // A prompt after done leaves done standing: the task is the model's to
     // reopen with board_status "working", the activity is ours.
     notePrs(prLinksOf(text))
@@ -529,7 +550,8 @@ async function turnCompleted($: EngineInterface, e: TurnEnd) {
     }
   } else if (!mainTurnId || e.turnId === mainTurnId) {
     mainRunning = false
-    board.waiting = null
+    // A plan waiting for the go keeps the session waiting on the person.
+    board.waiting = planWaiting(board)
     event('turn', e.isAborted ? 'interrupted' : `turn done in ${secs}s`)
     await refreshSlow($)
     await readTranscript($)
@@ -656,6 +678,7 @@ export const register: Register = (on) => {
   on('tool.call', async ($, e, next) => {
     if (e.tool === boardTool) return { result: await boardStatusCalled($, e as unknown as Record<string, unknown>) }
     if (e.tool === queueTool) return { result: await boardQueueCalled($, e as unknown as Record<string, unknown>) }
+    if (e.tool === planTool) return { result: await boardPlanCalled($, e as unknown as Record<string, unknown>) }
     const rec = await toolStarted($, e.tool, e as unknown as Record<string, unknown>, e.tool_use_id, e.agentId)
     if (!rec) return next(e)
     let outcome: 'ok' | 'denied' | 'failed' = 'failed'

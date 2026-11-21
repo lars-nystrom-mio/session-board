@@ -37,6 +37,37 @@ X = '77777777-0000-4000-8000-000000000007'  # in a sandbox, claims a message
 G = '88888888-0000-4000-8000-000000000008'  # everything on the footer at once
 
 
+O = '99999999-0000-4000-8000-000000000009'  # an orchestrator whose plan waits for the go
+P = 'aaaaaaaa-0000-4000-8000-00000000000a'  # delivering an item of O's plan
+Q = 'bbbbbbbb-0000-4000-8000-00000000000b'  # delivered an item of O's plan
+Y = 'cccccccc-0000-4000-8000-00000000000c'  # in a sandbox, with a hostile plan
+
+
+def plans(now):
+    """An orchestrator with a plan, two sessions on its items, and a sandboxed plan."""
+    edi = 'C:\\Workspace.mioit\\Mio.EDI.Azure.Api'
+    o = board(O, edi, 'waiting', 'orchestrate 24190', now=now)
+    o.update(workItem='24190', waiting={'kind': 'plan', 'detail': 'Go-ahead for the plan for #24190, and 1 answer', 'since': now - 3 * MIN})
+    o['plan'] = {
+        'workItem': '24190', 'title': 'Completeness view', 'at': now - 3 * MIN,
+        'gate': {'since': now - 3 * MIN, 'questions': ['Is the FileHorizon feed in place?']},
+        'items': [
+            {'workItem': '30277', 'title': 'Delivered lines', 'type': 'User Story', 'start': 'now', 'after': [], 'proposed': False, 'question': None, 'reason': ''},
+            {'workItem': '30281', 'title': 'Modify first', 'type': 'Bug', 'start': 'now', 'after': [], 'proposed': False, 'question': None, 'reason': ''},
+            {'workItem': '26219', 'title': 'Rows overlap', 'type': 'Bug', 'start': 'later', 'after': ['30281'], 'proposed': True, 'question': None, 'reason': ''},
+            {'workItem': '29581', 'title': 'SFTP row', 'type': 'User Story', 'start': 'hold', 'after': [], 'proposed': False, 'question': 1, 'reason': ''},
+            {'workItem': '26100', 'title': 'Docs', 'type': 'Task', 'start': 'skip', 'after': [], 'proposed': False, 'question': None, 'reason': 'tasks get no session'},
+        ]}
+    p = board(P, edi, 'running', 'deliver 30281', now=now)
+    p.update(workItem='30281', skill={'name': 'work-item-delivery', 'args': '30281', 'at': now - 9 * MIN})
+    q = board(Q, edi, 'idle', 'deliver 30277', now=now)
+    q.update(workItem='30277', done={'at': now - 2 * MIN, 'note': 'merged'})
+    y = board(Y, 'C:\\sandbox\\x', 'idle', 'boxed plan', now=now)
+    y['plan'] = {'title': '<img src=x onerror=alert(1)>', 'gate': None,
+                 'items': [{'workItem': '<b>1</b>', 'title': '"><script>bad()</script>', 'type': 'constructor', 'start': '<i>'}]}
+    return [o, p, q], y
+
+
 def busy(now):
     """A tile with every footer item, long names and more agents than fit."""
     b = board(G, 'C:\\Workspace.mioit\\Mio.BI.Services.Export', 'idle', 'Issue #30395 code-review delivery', now=now)
@@ -89,6 +120,7 @@ def write_boards(root: Path):
         board(F, 'C:\\Workspace.mioit\\dotnet-upgrade-kit', 'idle', now=now, events=[
             {'t': now - 70 * MIN, 'kind': 'prompt', 'text': envelope('mio-m3-sales-c7', 'c7', 'Please check these work items')}]),
         busy(now),
+        *plans(now)[0],
     ]
     (root / 'sessions').mkdir()
     for b in sessions:
@@ -98,6 +130,7 @@ def write_boards(root: Path):
     fake = board(X, 'C:\\sandbox\\session-board', 'idle', 'boxed', now=now, messages=[
         {'t': now - 4 * MIN + 2000, 'dir': 'in', 'peer': 'session-board-f4', 'text': probe}])
     (root / 'sandboxed' / f'{X}.json').write_text(json.dumps(fake), encoding='utf-8')
+    (root / 'sandboxed' / f'{Y}.json').write_text(json.dumps(plans(now)[1]), encoding='utf-8')
     shutil.copy(PAGE, root / 'index.html')
 
 
@@ -208,6 +241,34 @@ class MessagesView(unittest.TestCase):
         rows = self.page.locator('#d-body .mmsg')
         self.assertEqual(rows.count(), 2)
         self.assertIn('Probe reply', rows.first.inner_text())
+
+    def test_a_plan_shows_above_its_orchestrator_with_each_items_session(self):
+        plan = self.page.locator('.plan', has=self.page.locator('.p-by', has_text='orchestrate 24190'))
+        self.assertIn('Waiting for your go and 1 answer', plan.locator('.p-gate').inner_text())
+        rows = plan.locator('.p-row')
+        self.assertEqual(rows.count(), 5)
+        classes = [rows.nth(i).get_attribute('class').split()[1] for i in range(5)]
+        self.assertEqual(classes, ['n-done', 'n-running', 'n-later', 'n-hold', 'n-skip'])
+        self.assertIn('after #30281', rows.nth(2).inner_text())
+        self.assertIn('proposed', rows.nth(2).inner_text())
+        self.assertIn('Q1', rows.nth(3).inner_text())
+        self.assertEqual(plan.locator('.p-rail path.proposed').count(), 1)
+        self.assertIn('1 of 4 done', plan.locator('.p-tally').inner_text())
+        # The orchestrator waits on the person, so the board counts it.
+        self.assertIn('s-waiting', self.tile(O).get_attribute('class'))
+        rows.nth(1).hover()
+        self.assertIn('linked', self.tile(P).get_attribute('class'))
+        rows.nth(1).click()
+        self.settled()
+        self.assertIn('30281', self.page.locator('#d-body').inner_text())
+
+    def test_a_sandboxed_plan_renders_as_text(self):
+        plan = self.page.locator('.plan', has=self.page.locator('.p-by', has_text='boxed plan'))
+        self.assertEqual(plan.count(), 1)
+        self.assertEqual(plan.locator('img, script, .p-row b, .p-row i').count(), 0)
+        self.assertNotIn('<', plan.inner_text())
+        self.assertEqual(plan.locator('.p-row .ty').text_content(), 'constructor')
+
 
     def test_a_full_tile_keeps_the_height_and_cuts_nothing(self):
         # 370px of viewport leaves the narrowest tile the grid allows.

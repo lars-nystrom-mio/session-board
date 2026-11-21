@@ -108,6 +108,8 @@ export type Board = {
   // Set through the board_status tool: the task the session was started with is
   // finished. A queue in server/serve.py frees the session's slot on it.
   done?: { at: number; note: string } | null
+  // A plan of work items this session shows on the board, set through board_plan.
+  plan?: Plan | null
 }
 
 // A background task the session will hear from: a Bash or PowerShell call run
@@ -811,6 +813,144 @@ export function boardStatus(board: Board, input: Record<string, unknown>, now: n
     return 'Recorded: working. Call "done" again when the task is finished.'
   }
   return 'status must be "done" or "working"; nothing recorded.'
+}
+
+// ---- Plans ------------------------------------------------------------------
+
+// A plan of work items that a planning session (an orchestrator) shows on the
+// board. The board only draws it; each item's progress comes from the session
+// that reports that work item.
+export type PlanStart = 'now' | 'later' | 'hold' | 'skip'
+export type PlanItem = {
+  workItem: string
+  title: string
+  type: string
+  start: PlanStart
+  // Work items this one waits for; proposed: an order the user hasn't approved yet.
+  after: string[]
+  proposed: boolean
+  // The question (1-based, in gate.questions) the item is held on.
+  question: number | null
+  reason: string
+}
+export type Plan = {
+  workItem: string | null
+  title: string
+  at: number
+  // Set while the plan waits for the user's go or answers; the session shows as needing them.
+  gate: { since: number; questions: string[] } | null
+  items: PlanItem[]
+}
+
+export const PLAN_MAX_ITEMS = 40
+export const PLAN_MAX_QUESTIONS = 9
+const PLAN_STARTS = new Set(['now', 'later', 'hold', 'skip'])
+
+const itemId = (v: unknown): string => {
+  const s = typeof v === 'number' && Number.isInteger(v) ? String(v) : str(v).trim().replace(/^#/, '')
+  return /^[A-Za-z0-9._-]{1,40}$/.test(s) ? s : ''
+}
+
+export const BOARD_PLAN_TOOL = {
+  name: 'board_plan',
+  description:
+    "Shows a delivery plan on the session board (the user's dashboard of Claude Code sessions): the work items " +
+    'you plan to run, each as its own session, in what order, and which wait, are on hold or are skipped. ' +
+    'Call it when you have such a plan, and again with the whole plan whenever the plan itself changes ' +
+    '(an item added, put on hold, released, reordered or skipped). Each call replaces the plan. ' +
+    "Don't call it to report progress: the board reads each item's progress from the session working on it. " +
+    'Set waitingForGo while the plan waits for the user to approve it or answer questions; the board then ' +
+    'shows this session as needing the user until they reply. Call it with clear: true once the plan is over. ' +
+    'The board only displays the plan; it starts nothing.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      workItem: { type: 'string', description: 'The Feature or epic the plan delivers, if any.' },
+      title: { type: 'string', description: "The plan's title, such as the Feature's title." },
+      items: {
+        type: 'array',
+        description: 'Every work item of the plan, in the order you plan to run them.',
+        items: {
+          type: 'object',
+          properties: {
+            workItem: { type: 'string', description: 'The work item number.' },
+            title: { type: 'string' },
+            type: { type: 'string', description: 'Bug, User Story, Task, ...' },
+            start: {
+              type: 'string',
+              enum: ['now', 'later', 'hold', 'skip'],
+              description: 'now: starts at once, or on the go. later: after the items in "after". hold: waits on a question or the user. skip: gets no session.',
+            },
+            after: { type: 'array', items: { type: 'string' }, description: 'Work items that must finish first.' },
+            proposed: { type: 'boolean', description: 'The order in "after" is your proposal, not yet approved.' },
+            question: { type: 'integer', description: 'For hold: the number (1-based) of the question in "questions" it waits on.' },
+            reason: { type: 'string', description: 'One line: why it is held or skipped.' },
+          },
+          required: ['workItem', 'title', 'start'],
+        },
+      },
+      waitingForGo: { type: 'boolean', description: 'True while nothing starts until the user approves or answers.' },
+      questions: { type: 'array', items: { type: 'string' }, description: 'The questions the user needs to answer, in order.' },
+      clear: { type: 'boolean', description: 'Remove the plan from the board.' },
+    },
+  },
+}
+
+// A board_plan call; returns what the model reads back.
+export function boardPlan(board: Board, input: Record<string, unknown>, now: number): string {
+  if (input.clear === true) {
+    board.plan = null
+    return 'Removed the plan from the board.'
+  }
+  const raw = Array.isArray(input.items) ? input.items : []
+  const items: PlanItem[] = []
+  for (const r of raw) {
+    if (!r || typeof r !== 'object') continue
+    const i = r as Record<string, unknown>
+    const workItem = itemId(i.workItem)
+    if (!workItem || items.some((x) => x.workItem === workItem)) continue
+    const start = PLAN_STARTS.has(str(i.start)) ? (str(i.start) as PlanStart) : 'now'
+    const after = (Array.isArray(i.after) ? i.after : []).map(itemId).filter((id) => id && id !== workItem)
+    items.push({
+      workItem,
+      title: clip(str(i.title), 200),
+      type: clip(str(i.type), 30),
+      start,
+      after: [...new Set(after)].slice(0, 10),
+      proposed: i.proposed === true,
+      question: typeof i.question === 'number' && Number.isInteger(i.question) && i.question > 0 ? i.question : null,
+      reason: clip(str(i.reason), 200),
+    })
+    if (items.length >= PLAN_MAX_ITEMS) break
+  }
+  if (!items.length) return 'items is empty: give at least one work item with workItem, title and start. Nothing recorded.'
+  const questions = (Array.isArray(input.questions) ? input.questions : [])
+    .map((q) => clip(str(q), 300)).filter(Boolean).slice(0, PLAN_MAX_QUESTIONS)
+  for (const it of items) if (it.question && it.question > questions.length) it.question = null
+  const gated = input.waitingForGo === true || questions.length > 0
+  board.plan = {
+    workItem: itemId(input.workItem) || board.workItem,
+    title: clip(str(input.title), 200),
+    at: now,
+    gate: gated ? { since: board.plan?.gate?.since ?? now, questions } : null,
+    items,
+  }
+  const deliver = items.filter((i) => i.start !== 'skip').length
+  return (
+    `Plan on the board: ${items.length} item${items.length === 1 ? '' : 's'}, ${deliver} to deliver.` +
+    (gated ? ' It shows this session as waiting for the user until they reply; once the plan goes ahead, call board_plan again without waitingForGo.' : '') +
+    (items.length < raw.length ? ' Some items had no usable workItem or repeated one and were left out.' : '')
+  )
+}
+
+// What the session waits for while its plan has a gate, or null.
+export function planWaiting(board: Board): Waiting | null {
+  const g = board.plan?.gate
+  if (!g) return null
+  const n = g.questions.length
+  const what = board.plan?.workItem ? 'the plan for #' + board.plan.workItem : 'the plan'
+  const answers = n ? `, and ${n} answer${n === 1 ? '' : 's'}` : ''
+  return { kind: 'plan', detail: `Go-ahead for ${what}${answers}`, since: g.since }
 }
 
 export const BOARD_QUEUE_TOOL = {

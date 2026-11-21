@@ -19,6 +19,10 @@ install it and how to serve the page. This file is for working on it.
   It reads `queue.json` and the status files through `$.fs`, not through the
   server, and `plannedWork` in `lib.ts` formats the answer. A session counts
   as live on the same 60 s rule as `GONE_MS` in `serve.py`.
+  `board_plan` (deferred too) lets an orchestrating session put its plan of
+  work items into its status file (`plan`, cleaned by `boardPlan` in `lib.ts`).
+  While the plan has a `gate`, each main turn's end leaves the session waiting
+  (`planWaiting`), and the person's next prompt clears the gate.
 - `hooks/lib.ts`: the status file's shape (`Board`) and pure helpers. Keep
   anything without `$` here so the tests can call it.
 - `hooks/board.test.ts`: tests, run by `claude plugin test .`.
@@ -31,6 +35,10 @@ install it and how to serve the page. This file is for working on it.
   sessions in a sandbox write through a mount. Those are untrusted: `defang()`
   cleans each one before anything renders it, because the page puts some
   fields into HTML unescaped. The server never reads `sandboxed/`.
+  A session's `plan` draws as a strip above the tiles of its group (`planOf`
+  checks its shape, `planHtml` draws it). Each item's state comes from the
+  newest session reporting that work item, one outside a sandbox first. The
+  board starts nothing from a plan.
 - `server/serve.py`: optional stdlib server for the board folder, but `/`
   comes from `dashboard/index.html` in the repo. It turns off `SO_REUSEADDR` on
   Windows, where it would let it bind a port another server holds. It adds
@@ -168,6 +176,9 @@ SESSION_BOARD_DIR=<scratch dir> claude -p --plugin-dir . --model haiku "<prompt 
 - A session's name in `ListAgents` (`session-board-f4`) can't be derived from
   its session id, and no API gives it. The page learns it by pairing a sent
   message with its receipt in another file (`buildFlows`).
+
+- That an orchestrate skill calls `board_plan` with its plan and again when
+  the plan changes. The skill has to be told to; nothing here makes it.
 
 ## Not verified yet (messages)
 

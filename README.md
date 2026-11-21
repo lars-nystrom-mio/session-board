@@ -57,6 +57,23 @@ points its own name at 127.0.0.1 (DNS rebinding) can read your status files.
 The bundled server below refuses every request not addressed to `127.0.0.1` or
 `localhost`; prefer it when you can.
 
+### Plans from orchestrating sessions
+
+A session that runs several work items as separate sessions, such as one running
+an orchestrate skill, can show its plan on the board through the
+`board_plan` tool. The plan appears above that session's tile, in its group. It
+has one row per work item, with lines on the left joining an item to the items
+it waits for. Each row takes its state from the session working on that work
+item: running, needs you, done or ended. Rows without a session show whether the
+item starts on your go, waits for another item, is on hold or is skipped.
+Clicking a row opens its session.
+
+While the plan waits for your go or your answers, the orchestrating session
+counts as **needs you** and its questions show on the plan. Your next prompt in
+that session clears this. The board only shows the plan; it starts nothing, and
+it works under `python -m http.server` too. The tool is deferred, so sessions
+that never plan get no extra context.
+
 ### Queue work items from the board
 
 On Windows, serve the page with the bundled server instead, from this repo:
