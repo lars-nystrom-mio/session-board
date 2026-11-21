@@ -6,7 +6,7 @@ import unittest
 import uuid
 from pathlib import Path
 
-from serve import GONE_MS, MACHINE_STALE_MS, START_MS, Queue, advance, check_launch, child_env, known_projects, launch_command, memory_hold, newest_machine, outside_sessions, same_origin, slot_free
+from serve import GONE_MS, KEEP_ENDED, MACHINE_STALE_MS, START_MS, Queue, advance, check_launch, child_env, known_projects, launch_command, memory_hold, newest_machine, outside_sessions, same_origin, slot_free, trim
 
 
 def write_session(board: Path, sid: str, **fields) -> None:
@@ -180,8 +180,25 @@ class Advance(unittest.TestCase):
         self.assertEqual([i["workItem"] for i in started], ["2"])
         q = {"limits": {a: 2}, "items": [item(1, "/a")]}
         self.assertEqual(len(advance(q, {}, 10, IDLE, 4, outside={a: 1})), 1)
+        x, y = (os.path.normcase(os.path.normpath(p)) for p in ("/x", "/y"))
+        q = {"limits": {}, "items": [item(1, "/a"), item(2, "/x", "running", sessionId="s2", startedAt=10)]}
+        self.assertEqual(advance(q, {}, 10, IDLE, 2, outside={x: 1, y: 1}), [])  # the global cap
+
+    def test_sessions_in_repos_the_queue_does_not_touch_leave_the_global_cap_alone(self):
+        others = {os.path.normcase(os.path.normpath(f"/r{n}")): 1 for n in range(4)}
         q = {"limits": {}, "items": [item(1, "/a")]}
-        self.assertEqual(advance(q, {}, 10, IDLE, 2, outside={"/x": 1, "/y": 1}), [])  # the global cap
+        self.assertEqual([i["workItem"] for i in advance(q, {}, 10, IDLE, 4, outside=others)], ["1"])
+
+
+class Trim(unittest.TestCase):
+    def test_keeps_the_session_ids_of_dropped_items(self):
+        q = {"limits": {}, "items": [item(n, "/a", "finished", sessionId=f"s{n}", endedAt=n)
+                                     for n in range(KEEP_ENDED + 2)]}
+        trim(q)
+        self.assertEqual(len(q["items"]), KEEP_ENDED)
+        self.assertEqual(q["started"], ["s0", "s1"])
+        trim(q)
+        self.assertEqual(q["started"], ["s0", "s1"])
 
 
 class OutsideSessions(unittest.TestCase):
@@ -219,10 +236,12 @@ class OutsideSessions(unittest.TestCase):
         (self.board / "sandboxed").mkdir()
         (self.board / "sandboxed" / "x.json").write_text(json.dumps(
             {"sessionId": "x", "cwd": self.repo, "workItem": "7", "state": "running", "updatedAt": self.now}), encoding="utf-8")
+        self.write("trimmed", state="running")
+        self.write("orchestrator", state="waiting", plan={"items": [{"workItem": "7"}], "gate": "go?"})
         items = [item(1, self.repo, "finished", sessionId="queued")]
-        self.assertEqual(outside_sessions(self.board, items, self.now, IDLE), {})
+        self.assertEqual(outside_sessions(self.board, items, self.now, IDLE, ["trimmed"]), {})
         self.write("idle", state="idle", stateSince=self.now - IDLE + 60_000)  # not idle long enough yet
-        self.assertEqual(outside_sessions(self.board, items, self.now, IDLE), {os.path.normcase(self.repo): 1})
+        self.assertEqual(outside_sessions(self.board, items, self.now, IDLE, ["trimmed"]), {os.path.normcase(self.repo): 1})
 
 
 class MemoryHold(unittest.TestCase):

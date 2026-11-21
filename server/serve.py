@@ -23,7 +23,8 @@ board's board_status tool with "done" and its turn ended; it sat idle for
 stopped writing. "release" frees a slot by hand. A session started some other
 way (by hand, or a /deliver outside the queue) takes a slot too while it is on a
 work item and would hold one by the same rules ("busy" per project); an idle chat
-session without a work item doesn't. While the newest memory sample a
+session without a work item doesn't, nor does one with a plan. Against
+--max-sessions it counts only while its project has items queued or running. While the newest memory sample a
 session wrote shows RAM or commit charge too high, nothing new starts ("held").
 The queue is kept in queue.json in
 the board folder, so a restart picks it up.
@@ -63,6 +64,7 @@ TICK_S = 5
 GONE_MS = 60_000  # a status file this old belongs to a session that is gone
 START_MS = 180_000  # a started item with no status file after this never came up
 KEEP_ENDED = 20  # finished, failed and cancelled items kept for the page
+KEEP_STARTED = 500  # session ids of trimmed items, so their sessions never count as outside ones
 # Memory pressure, in percent of RAM and of the commit limit, that holds the queue:
 # no new item starts from HOLD until both drop below RELEASE. The page's header
 # strip turns orange at the same HOLD values.
@@ -192,22 +194,27 @@ def slot_free(board: dict | None, started_at: int, now: int, idle_ms: int) -> st
     return None
 
 
-def outside_sessions(board: Path, queue_items: list[dict], now: int, idle_ms: int) -> dict[str, int]:
+def outside_sessions(board: Path, queue_items: list[dict], now: int, idle_ms: int,
+                     started: list | tuple = ()) -> dict[str, int]:
     """How many live sessions outside the queue hold a slot, by project key.
 
     Such a session is on a work item (`workItem` set) and would still hold its
     slot by `slot_free`'s rules, were it a queue item. A queue item's own
-    session, in any state, never counts here: a released item stays released.
+    session, in any state, never counts here, nor does one of an item `trim`
+    dropped (`started`): a released item stays released. Neither does a session
+    with a `plan`: an orchestrator works through the sessions it starts, and
+    waits on the person at its gates.
     Projects match like `known_projects`: the repo root, else the cwd.
     """
     from_queue = {i.get("sessionId") for i in queue_items if i.get("sessionId")}
+    from_queue.update(s for s in started if isinstance(s, str))
     busy: dict[str, int] = {}
     for f in (board / "sessions").glob("*.json"):
         try:
             s = json.loads(f.read_text(encoding="utf-8"))
             path = (s.get("repo") or {}).get("root") or s["cwd"]
             sid = s.get("sessionId") or f.stem
-            if not s.get("workItem") or sid in from_queue or f.stem in from_queue:
+            if not s.get("workItem") or s.get("plan") or sid in from_queue or f.stem in from_queue:
                 continue
             if slot_free(s, 0, now, idle_ms):
                 continue
@@ -259,7 +266,9 @@ def advance(queue: dict, boards: dict, now: int, idle_ms: int, max_sessions: int
 
     `boards` maps a session id to its status file, for the running items' sessions.
     `outside` counts, by project key, sessions outside the queue that hold a slot
-    (`outside_sessions`): they count against both limits like running items.
+    (`outside_sessions`). They count against a project's limit like running
+    items, and against `max_sessions` only in projects with queued or running
+    items, so sessions in repos the queue doesn't touch never hold it up.
     """
     outside = outside or {}
     for item in queue["items"]:
@@ -269,9 +278,11 @@ def advance(queue: dict, boards: dict, now: int, idle_ms: int, max_sessions: int
         if reason:
             item.update(state="finished", endedAt=now, endedBy=reason)
     running = [i for i in queue["items"] if i["state"] == "running"]
+    in_queue = {key(i["cwd"]) for i in queue["items"] if i["state"] in ("queued", "running")}
+    others = sum(n for k, n in outside.items() if k in in_queue)
     starting = []
     for item in queue["items"]:
-        if hold or item["state"] != "queued" or len(running) + sum(outside.values()) >= max_sessions:
+        if hold or item["state"] != "queued" or len(running) + others >= max_sessions:
             continue
         here = outside.get(key(item["cwd"]), 0) + sum(1 for i in running if key(i["cwd"]) == key(item["cwd"]))
         if here >= queue["limits"].get(key(item["cwd"]), 1):
@@ -286,8 +297,13 @@ def trim(queue: dict) -> None:
     """Keeps every open item and the newest of the rest."""
     ended = sorted((i for i in queue["items"] if i["state"] not in ("queued", "running")),
                    key=lambda i: i.get("endedAt") or 0)
-    drop = {id(i) for i in ended[:max(0, len(ended) - KEEP_ENDED)]}
+    dropped = ended[:max(0, len(ended) - KEEP_ENDED)]
+    drop = {id(i) for i in dropped}
+    started = [s for s in queue.get("started", []) if isinstance(s, str)]
+    started += [i["sessionId"] for i in dropped if isinstance(i.get("sessionId"), str)]
     queue["items"] = [i for i in queue["items"] if id(i) not in drop]
+    if started:
+        queue["started"] = started[-KEEP_STARTED:]
 
 
 def child_env(environ=os.environ) -> dict:
@@ -377,7 +393,7 @@ class Queue:
         now = int(time.time() * 1000)
         self.held = memory_hold(newest_machine(self.board, now), self.held is not None)
         live = {k: v for k, v in boards.items() if v is not None}
-        outside = outside_sessions(self.board, q["items"], now, self.idle_ms)
+        outside = outside_sessions(self.board, q["items"], now, self.idle_ms, q.get("started", []))
         for item in advance(q, live, now, self.idle_ms, self.max_sessions, hold=self.held is not None, outside=outside):
             prompt = self.prompt.replace("{id}", item["workItem"])
             try:
@@ -396,7 +412,7 @@ class Queue:
     def view(self, projects: list[dict]) -> dict:
         with self.lock:
             q = self.load()
-        busy = outside_sessions(self.board, q["items"], int(time.time() * 1000), self.idle_ms)
+        busy = outside_sessions(self.board, q["items"], int(time.time() * 1000), self.idle_ms, q.get("started", []))
         return {
             "prompt": self.prompt,
             "maxSessions": self.max_sessions,
