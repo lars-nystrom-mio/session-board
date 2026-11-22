@@ -333,6 +333,7 @@ test('a housekeeping command keeps the skill and its progress report', async ($,
   const clock = mock.clock(on, { now: 1_000 })
   mock.env(on, { SESSION_BOARD_DIR: '/board' })
   const files = new Map<string, string>()
+  on('tool.call', { tool: 'Skill' }, () => ({ result: 'loaded' }))
   on('session.id', () => ({ value: 's1' }))
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('fs.exists', (_$, e) => ({ value: files.has(e.path) }))
@@ -367,13 +368,20 @@ test('a housekeeping command keeps the skill and its progress report', async ($,
   expect(board.skill?.name).toBe('gh-issue-delivery')
   expect(board.activeSkill).toBe('gh-issue-delivery')
   expect(board.workItem).toBe('58')
-  expect(board.prompt).toBe('/rename delivery 58')
+  expect(board.prompt).toBe('/gh-issue-delivery https://github.com/o/r/issues/58 medium')
+  expect(board.events.some((e: { text: string }) => e.text === '/rename delivery 58')).toBe(true)
 
   // Another skill is still a new task.
   await turn('/code-review high 70', 't4')
   board = await status()
   expect(board.progress ?? null).toBe(null)
   expect(board.skill?.name).toBe('code-review')
+
+  // A skill the model loads is recorded even if a built-in shares its name.
+  await $.turn.start({ text: 'check the status', turnId: 't5' })
+  await $.tool.call({ tool: 'Skill', skill: 'status', args: '' })
+  await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't5', reason: 'answer' })
+  expect((await status()).activeSkill).toBe('status')
 })
 
 describe('prompt cache', () => {
@@ -722,6 +730,11 @@ test('a plan waiting for the go keeps the session waiting until the person repli
   expect(waiting.state).toBe('waiting')
   expect(waiting.waiting?.kind).toBe('plan')
   expect(waiting.plan?.items?.[0]?.workItem).toBe('26099')
+
+  // A housekeeping command is no go: the plan still waits.
+  await $.turn.start({ text: '/rename orchestrator', turnId: 't1b' })
+  await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1b', reason: 'answer' })
+  expect((await status()).waiting?.kind).toBe('plan')
 
   await $.turn.start({ text: 'go', turnId: 't2' })
   await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't2', reason: 'answer' })

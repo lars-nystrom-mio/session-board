@@ -121,8 +121,8 @@ in `lib.ts`) and never touches `done`; the tool's description keeps the two
 uses apart so a step doesn't get called `done`. A subagent's progress call is
 ignored. `done`, a slash command other than `skill.name` (not a job firing)
 and `/clear` clear `progress`. A built-in housekeeping command
-(`housekeepingCommand` in `lib.ts`: `/reload-plugins`, `/rename`, …) neither
-clears it nor replaces `skill`. The tile shows it in place of `phaseOf` while
+(`housekeepingCommand` in `lib.ts`: `/reload-plugins`, `/rename`, …) typed as a
+prompt changes none of `progress`, `skill`, `prompt` or a plan's gate. The tile shows it in place of `phaseOf` while
 the session is running, waiting or in the background (an idle one may have stopped),
 formatted by `progressText`, which the page and `lib.ts` each keep in step by hand.
 

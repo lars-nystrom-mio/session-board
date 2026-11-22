@@ -495,7 +495,7 @@ function setWaiting($: EngineInterface, waiting: Waiting) {
 }
 
 function setSkill(name: string, args: string) {
-  if (!board || !name || housekeepingCommand(name)) return
+  if (!board || !name) return
   board.activeSkill = name
   if (!skillSetThisTurn || !board.skill) {
     board.skill = { name, args, at: now() }
@@ -557,13 +557,18 @@ async function turnStarted($: EngineInterface, text: string) {
   } else if (text.trim()) {
     const slash = slashCommand(text)
     const shown = slash ? `/${slash.name} ${slash.args}`.trim() : text
+    event('prompt', shown)
+    // A housekeeping command such as /rename tends to the session: it is no new
+    // task and no reply, so the prompt, skill, progress and plan gate stay.
+    if (slash && housekeepingCommand(slash.name)) {
+      schedule($)
+      return
+    }
     b.prompt = clip(shown, 600)
     b.promptAt = now()
-    event('prompt', shown)
-    if (slash && !housekeepingCommand(slash.name)) {
+    if (slash) {
       // Another command is a new task: the last one's progress report no longer
       // holds. A job firing the running skill again (a /loop tick) keeps it.
-      // A housekeeping command such as /rename is no task, and keeps both.
       if (!fired && slash.name !== b.skill?.name) b.progress = null
       setSkill(slash.name, slash.args)
     }

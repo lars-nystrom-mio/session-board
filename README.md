@@ -315,7 +315,8 @@ idle tile drops it), and the drawer shows it with when it was reported. Each cal
 report, and only the main conversation's reports count, not a subagent's. A
 progress report never marks the task done. `done`, a slash command other than
 the running skill or `/clear` clears it. Built-in housekeeping commands such as
-`/reload-plugins`, `/rename` or `/model` don't, and don't replace the recorded skill. The skill has to be told to call it; nothing
+`/reload-plugins`, `/rename` or `/model` don't, and don't replace the recorded
+skill or prompt, or count as the go for a plan. The skill has to be told to call it; nothing
 here makes it.
 
 Without a report, phases come from the newest running subagent's type, then
