@@ -50,6 +50,7 @@ import {
   shellToolDone,
   skillWorkItem,
   slashCommand,
+  housekeepingCommand,
   summarize,
   toolLabel,
   trimAgents,
@@ -494,7 +495,7 @@ function setWaiting($: EngineInterface, waiting: Waiting) {
 }
 
 function setSkill(name: string, args: string) {
-  if (!board || !name) return
+  if (!board || !name || housekeepingCommand(name)) return
   board.activeSkill = name
   if (!skillSetThisTurn || !board.skill) {
     board.skill = { name, args, at: now() }
@@ -559,9 +560,10 @@ async function turnStarted($: EngineInterface, text: string) {
     b.prompt = clip(shown, 600)
     b.promptAt = now()
     event('prompt', shown)
-    if (slash) {
+    if (slash && !housekeepingCommand(slash.name)) {
       // Another command is a new task: the last one's progress report no longer
       // holds. A job firing the running skill again (a /loop tick) keeps it.
+      // A housekeeping command such as /rename is no task, and keeps both.
       if (!fired && slash.name !== b.skill?.name) b.progress = null
       setSkill(slash.name, slash.args)
     }

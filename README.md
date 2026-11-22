@@ -314,7 +314,8 @@ phase while the session is at work (running, waiting or in the background; an
 idle tile drops it), and the drawer shows it with when it was reported. Each call replaces the last
 report, and only the main conversation's reports count, not a subagent's. A
 progress report never marks the task done. `done`, a slash command other than
-the running skill or `/clear` clears it. The skill has to be told to call it; nothing
+the running skill or `/clear` clears it. Built-in housekeeping commands such as
+`/reload-plugins`, `/rename` or `/model` don't, and don't replace the recorded skill. The skill has to be told to call it; nothing
 here makes it.
 
 Without a report, phases come from the newest running subagent's type, then

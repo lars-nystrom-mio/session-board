@@ -275,6 +275,20 @@ export function slashCommand(text: string): { name: string; args: string } | nul
   return m?.[1] ? { name: m[1], args: clip(m[2] ?? '', 200) } : null
 }
 
+// Built-in commands that tend to the session rather than start a task. They
+// neither replace the recorded skill nor clear its progress report. /clear is
+// not one: it ends the task, and the board is made fresh after it.
+const HOUSEKEEPING_COMMANDS = new Set([
+  'reload-plugins', 'rename', 'model', 'fast', 'effort', 'config', 'settings', 'status', 'cost', 'usage',
+  'context', 'compact', 'help', 'memory', 'permissions', 'allowed-tools', 'hooks', 'mcp', 'plugin', 'plugins',
+  'agents', 'theme', 'output-style', 'statusline', 'vim', 'ide', 'doctor', 'login', 'logout', 'export',
+  'copy', 'tasks', 'todos', 'bashes', 'add-dir', 'release-notes', 'privacy-settings', 'terminal-setup',
+])
+
+export function housekeepingCommand(name: string): boolean {
+  return HOUSEKEEPING_COMMANDS.has(name.trim().replace(/^\//, '').toLowerCase())
+}
+
 // ---- Messages between sessions ---------------------------------------------
 
 const MESSAGE_TEXT = 240

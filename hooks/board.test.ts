@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
-import { STALE_BOARD_MS, removeScript, staleBoards, costDayOf, localDay, addMessage, crossSessionMessage, peerNotice, sendTarget, MAX_MESSAGES, boardStatus, progressOf, progressText, boardPlan, planWaiting, plannedWork, pruneShells, shellReported, shellToolDone, SHELL_MAX_MS, addPrs, adoOrgOf, cronFired, cronToolDone, nextCronMatch, pruneCrons, CRON_EXPIRY_MS, WAKEUP_ID, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, childLabel, deriveState, freshBoard, memoryOf, parseMachine, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, summarize, toolLabel, trimAgents, workItemOf, skillTakesWorkItem, skillWorkItem, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
+import { STALE_BOARD_MS, removeScript, staleBoards, costDayOf, localDay, addMessage, crossSessionMessage, peerNotice, sendTarget, MAX_MESSAGES, boardStatus, progressOf, progressText, boardPlan, planWaiting, plannedWork, pruneShells, shellReported, shellToolDone, SHELL_MAX_MS, addPrs, adoOrgOf, cronFired, cronToolDone, nextCronMatch, pruneCrons, CRON_EXPIRY_MS, WAKEUP_ID, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, childLabel, deriveState, freshBoard, memoryOf, parseMachine, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, housekeepingCommand, summarize, toolLabel, trimAgents, workItemOf, skillTakesWorkItem, skillWorkItem, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
 
 describe('summaries', () => {
   test('a tool call becomes one short line', async () => {
@@ -16,6 +16,10 @@ describe('summaries', () => {
     expect(slashCommand('<command-message>log-check</command-message>\n<command-name>/log-check</command-name>\n<command-args>yesterday</command-args>'))
       .toEqual({ name: 'log-check', args: 'yesterday' })
     expect(slashCommand('<command-message>log-check</command-message> is running…')).toEqual({ name: 'log-check', args: '' })
+    for (const name of ['reload-plugins', 'rename', '/model', 'Compact'])
+      expect(housekeepingCommand(name)).toBe(true)
+    for (const name of ['clear', 'resume', 'gh-issue-delivery', 'code-review', 'loop', 'init', ''])
+      expect(housekeepingCommand(name)).toBe(false)
     expect(workItemOf('continue on #1234', false)).toBe('1234')
     expect(workItemOf('deliver 1234', false)).toBe(null)
     expect(workItemOf('1234, use autocomplete', true)).toBe('1234')
@@ -323,6 +327,53 @@ test('a skill that takes a PR number does not set the work item', async ($, on) 
   expect((await status()).workItem).toBe('1300')
   await turn('/loop 5m /work-item-delivery 25229', 't6')
   expect((await status()).workItem).toBe('25229')
+})
+
+test('a housekeeping command keeps the skill and its progress report', async ($, on) => {
+  const clock = mock.clock(on, { now: 1_000 })
+  mock.env(on, { SESSION_BOARD_DIR: '/board' })
+  const files = new Map<string, string>()
+  on('session.id', () => ({ value: 's1' }))
+  on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  on('fs.exists', (_$, e) => ({ value: files.has(e.path) }))
+  on('fs.read', (_$, e) => ({ value: files.get(e.path) ?? '' }))
+  on('fs.write', (_$, e) => {
+    files.set(e.path, e.text)
+    return { value: undefined }
+  })
+  on('fs.list', () => ({ value: [] }))
+  on('turn.start', (_$, e) => ({ turnId: e.turnId }))
+  on('turn.complete', () => ({ text: '' }))
+  const status = async () => {
+    await clock.advance(1_000)
+    const [, text] = [...files].find(([path]) => /[\\/]sessions[\\/]s1\.json$/.test(path)) ?? []
+    return JSON.parse(text ?? '{}')
+  }
+  const turn = async (text: string, turnId: string) => {
+    await $.turn.start({ text, turnId })
+    await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId, reason: 'answer' })
+  }
+
+  await $.session.start({ cwd: '/x', surface: null, isInteractive: true })
+  await $.turn.start({ text: '/gh-issue-delivery https://github.com/o/r/issues/58 medium', turnId: 't1' })
+  await $.tool.call({ tool: 'mcp__session-board__board_status', phase: 'Implementing', workItem: '58' })
+  await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  expect((await status()).progress?.phase).toBe('Implementing')
+
+  await turn('<command-message>reload-plugins</command-message>\n<command-name>/reload-plugins</command-name>\n<command-args></command-args>', 't2')
+  await turn('/rename delivery 58', 't3')
+  let board = await status()
+  expect(board.progress?.phase).toBe('Implementing')
+  expect(board.skill?.name).toBe('gh-issue-delivery')
+  expect(board.activeSkill).toBe('gh-issue-delivery')
+  expect(board.workItem).toBe('58')
+  expect(board.prompt).toBe('/rename delivery 58')
+
+  // Another skill is still a new task.
+  await turn('/code-review high 70', 't4')
+  board = await status()
+  expect(board.progress ?? null).toBe(null)
+  expect(board.skill?.name).toBe('code-review')
 })
 
 describe('prompt cache', () => {
