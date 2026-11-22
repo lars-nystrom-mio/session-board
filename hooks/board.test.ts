@@ -394,6 +394,7 @@ test('a long command keeps its work item and stores clipped args', async ($, on)
   const clock = mock.clock(on, { now: 1_000 })
   mock.env(on, { SESSION_BOARD_DIR: '/board' })
   const files = new Map<string, string>()
+  on('tool.call', { tool: 'Skill' }, () => ({ result: 'loaded' }))
   on('session.id', () => ({ value: 's1' }))
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('fs.exists', (_$, e) => ({ value: files.has(e.path) }))
@@ -420,6 +421,15 @@ test('a long command keeps its work item and stores clipped args', async ($, on)
   expect(board.skill?.name).toBe('loop')
   expect(board.skill?.args.length).toBe(200)
   expect(board.skill?.args.endsWith('…')).toBe(true)
+
+  // Args the model passes to the Skill tool are stored clipped too.
+  await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  await $.turn.start({ text: 'deliver the next one', turnId: 't2' })
+  await $.tool.call({ tool: 'Skill', skill: 'work-item-delivery', args: `${'use low review and keep the diff small, '.repeat(6)}then 25230` })
+  const next = await status()
+  expect(next.workItem).toBe('25230')
+  expect(next.skill?.name).toBe('work-item-delivery')
+  expect(next.skill?.args.length).toBe(200)
 })
 
 describe('prompt cache', () => {
