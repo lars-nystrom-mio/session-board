@@ -277,14 +277,14 @@ export function slashCommand(text: string): { name: string; args: string } | nul
 
 // Built-in commands that tend to the session rather than start a task. They
 // neither replace the recorded skill nor clear its progress report. /clear is
-// not one: it ends the task, and the board is made fresh after it. The list is
-// best effort; a built-in missing from it counts as a new task.
+// not one: it ends the task, and the board is made fresh after it, nor is
+// /rewind, which changes it. Names a user skill could well have (status,
+// export, usage, …) are left out, so such a skill still counts as a new task.
 const HOUSEKEEPING_COMMANDS = new Set([
-  'reload-plugins', 'rename', 'model', 'fast', 'effort', 'config', 'settings', 'status', 'cost', 'usage',
-  'context', 'compact', 'help', 'memory', 'permissions', 'allowed-tools', 'hooks', 'mcp', 'plugin', 'plugins',
-  'agents', 'theme', 'output-style', 'statusline', 'vim', 'ide', 'doctor', 'login', 'logout', 'export',
-  'copy', 'tasks', 'todos', 'bashes', 'add-dir', 'release-notes', 'privacy-settings', 'terminal-setup',
-  'rewind', 'btw', 'skills', 'stats', 'exit', 'feedback', 'bug', 'keybindings',
+  'reload-plugins', 'rename', 'model', 'fast', 'effort', 'config', 'compact', 'memory', 'permissions',
+  'allowed-tools', 'hooks', 'mcp', 'plugin', 'plugins', 'agents', 'skills', 'theme', 'output-style',
+  'statusline', 'keybindings', 'vim', 'ide', 'doctor', 'login', 'logout', 'add-dir', 'release-notes',
+  'privacy-settings', 'terminal-setup', 'btw', 'exit',
 ])
 
 export function housekeepingCommand(name: string): boolean {

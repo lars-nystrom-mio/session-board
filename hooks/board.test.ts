@@ -18,7 +18,7 @@ describe('summaries', () => {
     expect(slashCommand('<command-message>log-check</command-message> is running…')).toEqual({ name: 'log-check', args: '' })
     for (const name of ['reload-plugins', 'rename', '/model', 'Compact'])
       expect(housekeepingCommand(name)).toBe(true)
-    for (const name of ['clear', 'resume', 'gh-issue-delivery', 'code-review', 'loop', 'init', ''])
+    for (const name of ['clear', 'resume', 'rewind', 'status', 'export', 'gh-issue-delivery', 'code-review', 'loop', 'init', ''])
       expect(housekeepingCommand(name)).toBe(false)
     expect(workItemOf('continue on #1234', false)).toBe('1234')
     expect(workItemOf('deliver 1234', false)).toBe(null)
@@ -369,7 +369,9 @@ test('a housekeeping command keeps the skill and its progress report', async ($,
   expect(board.activeSkill).toBe('gh-issue-delivery')
   expect(board.workItem).toBe('58')
   expect(board.prompt).toBe('/gh-issue-delivery https://github.com/o/r/issues/58 medium')
-  expect(board.events.some((e: { text: string }) => e.text === '/rename delivery 58')).toBe(true)
+  expect(board.turns).toBe(1)
+  // Logged, but not as a prompt: a done tile doesn't count it as "+N prompts".
+  expect(board.events.find((e: { text: string }) => e.text === '/rename delivery 58')?.kind).toBe('session')
 
   // Another skill is still a new task.
   await turn('/code-review high 70', 't4')
@@ -731,8 +733,9 @@ test('a plan waiting for the go keeps the session waiting until the person repli
   expect(waiting.waiting?.kind).toBe('plan')
   expect(waiting.plan?.items?.[0]?.workItem).toBe('26099')
 
-  // A housekeeping command is no go: the plan still waits.
+  // A housekeeping command is no go: the plan still waits, even if no turn end follows.
   await $.turn.start({ text: '/rename orchestrator', turnId: 't1b' })
+  expect((await status()).waiting?.kind).toBe('plan')
   await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1b', reason: 'answer' })
   expect((await status()).waiting?.kind).toBe('plan')
 
