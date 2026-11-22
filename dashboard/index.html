@@ -2410,6 +2410,7 @@ function notify(s, kind, took = 0) {
 
 let pollTimer = null
 let polling = false
+let polledOnce = false
 
 // Chrome and Edge slow a hidden tab's own timers to about once a minute after
 // a few minutes, which would hold a notification back that long. A dedicated
@@ -2418,11 +2419,14 @@ let polling = false
 let pollWorker = null
 try {
   const src = 'let t; onmessage = (e) => { clearTimeout(t); if (e.data > 0) t = setTimeout(() => postMessage(0), e.data) }'
-  const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }))
-  pollWorker = new Worker(url)
-  URL.revokeObjectURL(url)
-  pollWorker.onmessage = () => poll()
-  pollWorker.onerror = () => { pollWorker = null; if (!polling) schedulePoll() }
+  // One small blob per load, kept: revoking it before the worker has read it
+  // fails in some browsers.
+  pollWorker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })))
+  // A wait that fired just as the tab came back may still arrive: the visible
+  // tab's own timer has taken over by then.
+  pollWorker.onmessage = () => { if (document.hidden) poll() }
+  // Before the first poll there's nothing to reschedule; that poll's finally does it.
+  pollWorker.onerror = () => { pollWorker = null; if (polledOnce && !polling) schedulePoll() }
 } catch { pollWorker = null }
 
 function schedulePoll() {
@@ -2452,6 +2456,7 @@ async function poll() {
     status.innerHTML = `<span class="dot"></span>${esc(err.message)}`
   } finally {
     polling = false
+    polledOnce = true
     schedulePoll()
   }
 }

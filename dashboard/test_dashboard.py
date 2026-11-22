@@ -583,6 +583,21 @@ class MessagesView(unittest.TestCase):
         self.page.evaluate('testHidden = false; pageWaits.length = 0; document.dispatchEvent(new Event("visibilitychange"))')
         self.page.wait_for_function('pageWaits.includes(2000)')
 
+    def test_a_hidden_tab_without_a_worker_polls_from_its_own_timer(self):
+        # The test shortens the 15 s wait so it needn't sit it out.
+        self.notify_page(init='''(() => {
+            Object.defineProperty(Document.prototype, 'hidden', { configurable: true, get: () => !!window.testHidden })
+            window.Worker = function () { throw new Error('no workers here') }
+            window.pageWaits = []
+            const st = window.setTimeout
+            window.setTimeout = function (fn, ms, ...rest) { pageWaits.push(ms); return st.call(this, fn, ms === 15000 ? 300 : ms, ...rest) }
+        })()''')
+        self.page.evaluate('testHidden = true; document.dispatchEvent(new Event("visibilitychange"))')
+        self.page.wait_for_function('pageWaits.filter((ms) => ms === 15000).length > 1')
+        now = int(time.time() * 1000)
+        self.rewrite(F, state='waiting', stateSince=now, waiting={'kind': 'question', 'detail': 'Which?', 'since': now})
+        self.page.wait_for_function('notes.length > 0', timeout=5000)
+
     def test_permission_is_asked_from_the_button_not_on_load(self):
         self.notify_page(perm='default')
         self.assertTrue(self.page.is_visible('#notify-ask'))
