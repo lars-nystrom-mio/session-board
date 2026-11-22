@@ -422,7 +422,8 @@ test('a long command keeps its work item and stores clipped args', async ($, on)
   expect(board.skill?.args.length).toBe(200)
   expect(board.skill?.args.endsWith('…')).toBe(true)
 
-  // Args the model passes to the Skill tool are stored clipped too.
+  // Args the model passes to the Skill tool are stored clipped too, and the
+  // work item is still read from them whole, not from the clipped copy.
   await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
   await $.turn.start({ text: 'deliver the next one', turnId: 't2' })
   await $.tool.call({ tool: 'Skill', skill: 'work-item-delivery', args: `${'use low review and keep the diff small, '.repeat(6)}then 25230` })
