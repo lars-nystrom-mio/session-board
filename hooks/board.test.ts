@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
-import { costDayOf, localDay, addMessage, crossSessionMessage, peerNotice, sendTarget, MAX_MESSAGES, boardStatus, progressOf, progressText, boardPlan, planWaiting, plannedWork, pruneShells, shellReported, shellToolDone, SHELL_MAX_MS, addPrs, adoOrgOf, cronFired, cronToolDone, nextCronMatch, pruneCrons, CRON_EXPIRY_MS, WAKEUP_ID, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, childLabel, deriveState, freshBoard, memoryOf, parseMachine, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, summarize, toolLabel, trimAgents, workItemOf, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
+import { STALE_BOARD_MS, removeScript, staleBoards, costDayOf, localDay, addMessage, crossSessionMessage, peerNotice, sendTarget, MAX_MESSAGES, boardStatus, progressOf, progressText, boardPlan, planWaiting, plannedWork, pruneShells, shellReported, shellToolDone, SHELL_MAX_MS, addPrs, adoOrgOf, cronFired, cronToolDone, nextCronMatch, pruneCrons, CRON_EXPIRY_MS, WAKEUP_ID, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, childLabel, deriveState, freshBoard, memoryOf, parseMachine, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, summarize, toolLabel, trimAgents, workItemOf, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
 
 describe('summaries', () => {
   test('a tool call becomes one short line', async () => {
@@ -734,5 +734,40 @@ describe('cost per day', () => {
     expect(costDayOf(today, null, 1, at(21, 9), at(22, 18))).toEqual({ day: '2026-11-22', usd: 0 })
     // Reset across midnight: everything since counts.
     expect(costDayOf({ day: '2026-11-21', usd: 0 }, 8, 0.5, at(21, 9), at(22, 0, 1))).toEqual({ day: '2026-11-22', usd: 0 })
+  })
+})
+
+describe('old status files', () => {
+  const now = 1_800_000_000_000
+  const at = (updatedAt: unknown) => JSON.stringify({ updatedAt })
+
+  test('only files a week old or more are deleted, never this session\'s own', async () => {
+    const files = [
+      { name: 'old.json', text: at(now - STALE_BOARD_MS - 1) },
+      { name: 'recent.json', text: at(now - STALE_BOARD_MS + 60_000) },
+      { name: 'self.json', text: at(now - STALE_BOARD_MS - 1) },
+    ]
+    expect(staleBoards(files, 'self', now)).toEqual(['old.json'])
+  })
+
+  test('unreadable, unparsable and foreign files are left alone', async () => {
+    const old = at(now - STALE_BOARD_MS - 1)
+    const files = [
+      { name: 'unread.json', text: null },
+      { name: 'torn.json', text: '{"updatedAt": 1' },
+      { name: 'no-date.json', text: '{}' },
+      { name: 'string-date.json', text: at('2020-01-01') },
+      { name: 'null.json', text: 'null' },
+      { name: 'notes.txt', text: old },
+      { name: "a'b.json", text: old },
+      { name: 'x;rm.json', text: old },
+    ]
+    expect(staleBoards(files, 'self', now)).toEqual([])
+  })
+
+  test('the delete command quotes every path', async () => {
+    const curly = String.fromCodePoint(0x2019)
+    expect(removeScript(['C:/b/sessions/a.json', "C:/O'Neil/s/b.json", `C:/x${curly}y/c.json`]))
+      .toBe(`Remove-Item -LiteralPath 'C:/b/sessions/a.json','C:/O''Neil/s/b.json','C:/x${curly}${curly}y/c.json' -Force -ErrorAction SilentlyContinue`)
   })
 })

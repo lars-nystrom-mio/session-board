@@ -1245,3 +1245,36 @@ export function freshBoard(sessionId: string, cwd: string, now: number): Board {
     done: null,
   }
 }
+
+// Status files of sessions that ended long ago: the page hides them after a
+// day, but the folder and the listing it fetches on every poll keep growing.
+export const STALE_BOARD_MS = 7 * 24 * 3600_000
+// The names the hooks write: a session id and .json. Anything else in the
+// folder isn't the mod's, and such a name can't carry shell syntax either.
+export const isBoardFileName = (name: string) => /^[A-Za-z0-9_-]+\.json$/.test(name)
+
+// The status files to delete: last written more than a week ago, never this
+// session's own, and never one that can't be read or has no updatedAt (it may
+// be caught mid-write, or not be a status file at all).
+export function staleBoards(files: { name: string; text: string | null }[], self: string, now: number): string[] {
+  const stale: string[] = []
+  for (const f of files) {
+    if (!isBoardFileName(f.name) || f.name === `${self}.json` || f.text === null) continue
+    let updatedAt: unknown
+    try {
+      updatedAt = (JSON.parse(f.text) as { updatedAt?: unknown } | null)?.updatedAt
+    } catch {
+      continue
+    }
+    if (typeof updatedAt === 'number' && now - updatedAt > STALE_BOARD_MS) stale.push(f.name)
+  }
+  return stale
+}
+
+// A PowerShell command that deletes these files and is quiet about ones that
+// are gone already (another session starting at the same time). PowerShell
+// reads the curly single quotes as quotes too, so each is doubled like '.
+export function removeScript(paths: string[]): string {
+  const quoted = paths.map((p) => `'${p.replace(/['\u{2018}\u{2019}\u{201A}\u{201B}]/gu, (q) => q + q)}'`).join(',')
+  return `Remove-Item -LiteralPath ${quoted} -Force -ErrorAction SilentlyContinue`
+}

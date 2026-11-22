@@ -22,6 +22,9 @@ import {
   boardPlan,
   boardStatus,
   progressText,
+  isBoardFileName,
+  removeScript,
+  staleBoards,
   clip,
   cronFired,
   cronToolDone,
@@ -314,6 +317,37 @@ async function tick($: EngineInterface) {
   await flush($)
 }
 
+const REMOVE_BATCH = 100 // paths per delete command, well inside Windows' command-line limit
+
+// Deletes status files no session has written for a week. sandboxed/ is left
+// alone: the mod doesn't own it.
+async function pruneOldBoards($: EngineInterface, dir: string, self: string) {
+  try {
+    const files: { name: string; text: string | null }[] = []
+    for (const f of await $.fs.list(`${dir}/sessions`)) {
+      if (f.kind === 'dir' || !isBoardFileName(f.name)) continue
+      let text: string | null = null
+      try {
+        text = await $.fs.read(`${dir}/sessions/${f.name}`)
+      } catch {}
+      files.push({ name: f.name, text })
+    }
+    const paths = staleBoards(files, self, now()).map((name) => `${dir}/sessions/${name}`)
+    for (let i = 0; i < paths.length; i += REMOVE_BATCH) await removeFiles($, paths.slice(i, i + REMOVE_BATCH))
+  } catch {}
+}
+
+// $.fs has no delete. PowerShell on Windows, rm elsewhere.
+async function removeFiles($: EngineInterface, paths: string[]) {
+  try {
+    const run = await $.process.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', removeScript(paths)], { timeoutMs: 20_000 })
+    if (run.exitCode === 0) return
+  } catch {}
+  try {
+    await $.process.run(['rm', '-f', '--', ...paths], { timeoutMs: 20_000 })
+  } catch {}
+}
+
 // The served dashboard always matches the one this plugin ships.
 async function copyDashboard($: EngineInterface, dir: string) {
   try {
@@ -384,6 +418,7 @@ async function init($: EngineInterface, cwd: string, interactive: boolean, reaso
     planTool = (await $.tool.register({ ...BOARD_PLAN_TOOL, isDeferred: true })).tool
   } catch {}
   await copyDashboard($, dir)
+  void pruneOldBoards($, dir, id)
   await refreshSlow($)
   await readTranscript($)
   await flush($)
