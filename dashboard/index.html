@@ -143,6 +143,15 @@
   .ram.stale .when { color: var(--warn); }
 
   main { padding: 18px 32px 40px; }
+  /* Today's totals, above the queue and the tiles. */
+  .today { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; margin-bottom: 16px; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .today .k { color: var(--faint); }
+  .today b { font-weight: 600; color: var(--text); }
+  .today .sep { color: var(--faint); }
+  .today .cost { cursor: help; border-bottom: 1px dotted var(--faint); }
+  .today .cost:focus-visible { outline: 2px solid var(--run); outline-offset: 1px; }
+  .today .you b { color: var(--you); }
+  .today .zero b { color: inherit; }
 
   /* The queue: what's running for it, what waits, and what just finished. */
   .queue-wrap { margin-bottom: 26px; }
@@ -678,6 +687,7 @@
   <div class="status" id="status">connecting…</div>
 </header>
 <main>
+  <div class="today" id="today" aria-label="Today"></div>
   <section class="queue-wrap" id="queue-wrap" hidden>
     <div class="g-bar"><button class="g-head" id="queue-head" aria-controls="queue"></button></div>
     <div class="queue" id="queue" aria-label="Queue"></div>
@@ -767,7 +777,7 @@ async function loadSessions() {
 
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const NUMBER_KEYS = new Set(['startedAt', 'updatedAt', 'stateSince', 'promptAt', 'at', 'since', 'until', 't',
-  'turns', 'costUsd', 'percent', 'tokens', 'window', 'nextAt', 'firedAt', 'endedAt', 'createdAt', 'offsetMs', 'number'])
+  'turns', 'costUsd', 'usd', 'percent', 'tokens', 'window', 'nextAt', 'firedAt', 'endedAt', 'createdAt', 'offsetMs', 'number'])
 const LIST_KEYS = ['prs', 'tools', 'agents', 'events', 'crons', 'shells', 'messages']
 const TEXT_KEYS = ['cwd', 'project', 'branch', 'tabTitle', 'model', 'prompt', 'workItem', 'activeSkill', 'endReason']
 
@@ -788,7 +798,7 @@ function defang(raw) {
   if (!b || typeof b !== 'object' || Array.isArray(b) || !SESSION_ID.test(b.sessionId)) return null
   for (const k of LIST_KEYS) b[k] = (Array.isArray(b[k]) ? b[k] : []).filter((x) => x && typeof x === 'object')
   for (const k of TEXT_KEYS) if (typeof b[k] !== 'string') b[k] = null
-  for (const k of ['repo', 'waiting', 'skill', 'context', 'cache', 'done', 'plan', 'progress']) {
+  for (const k of ['repo', 'waiting', 'skill', 'context', 'cache', 'done', 'plan', 'progress', 'costDay']) {
     if (!b[k] || typeof b[k] !== 'object' || Array.isArray(b[k])) b[k] = null
   }
   if (!(b.state in STATE_WORD)) b.state = 'idle'
@@ -925,6 +935,57 @@ function machineView() {
     stale: Date.now() - m.at > MACHINE_STALE_MS,
     held: queueServed ? queue?.held || null : null,
   }
+}
+
+// ---- Today's totals ---------------------------------------------------------
+
+const localDay = (t) => {
+  const d = new Date(t)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+// What sessions spent today, by project. costUsd is a session's running total,
+// so a session counts what it spent since costDay, the baseline the hooks set
+// at its first cost refresh of each local day (costDayOf in hooks/lib.ts). A
+// file without one, from hooks older than that, counts whole if the session
+// started today and not at all otherwise (`uncounted`). Ended sessions count.
+function todayCost(now) {
+  const day = localDay(now)
+  const midnight = new Date(now).setHours(0, 0, 0, 0)
+  const byProject = new Map()
+  let total = 0, uncounted = 0
+  for (const s of sessions) {
+    if (typeof s.costUsd !== 'number' || s.updatedAt < midnight) continue
+    let usd
+    if (s.costDay && typeof s.costDay.usd === 'number') usd = s.costDay.day === day ? s.costUsd - s.costDay.usd : 0
+    else if (s.startedAt >= midnight) usd = s.costUsd
+    else { uncounted++; continue }
+    usd = Math.max(0, usd)
+    if (!usd) continue
+    total += usd
+    const p = projectOf(s)
+    byProject.set(p, (byProject.get(p) || 0) + usd)
+  }
+  return { total, byProject, uncounted }
+}
+
+function renderToday(now, active) {
+  const { total, byProject, uncounted } = todayCost(now)
+  const waiting = countIn(active, 'waiting')
+  const usd = (n) => '$' + n.toFixed(2)
+  const split = [...byProject].sort((a, b) => b[1] - a[1] || byName(a[0], b[0])).map(([p, n]) => `${p}  ${usd(n)}`)
+  const title = [
+    split.length ? 'By project:' : 'Nothing spent yet today.',
+    ...split,
+    ...(uncounted ? ['', `${uncounted} session${uncounted === 1 ? '' : 's'} from before today with no day baseline (older hooks) not counted.`] : []),
+  ].join('\n')
+  const sep = '<span class="sep">·</span>'
+  const html = `<span class="k">today</span>
+    <span class="cost" tabindex="0" title="${esc(title)}"><b>${usd(total)}</b>${uncounted ? '+' : ''}</span>${sep}
+    <span class="${active.length ? '' : 'zero'}"><b>${active.length}</b> active</span>${sep}
+    <span class="you${waiting ? '' : ' zero'}"><b>${waiting}</b> ${waiting === 1 ? 'needs you' : 'need you'}</span>`
+  const el = $('today')
+  if (el.dataset.html !== html) { el.innerHTML = html; el.dataset.html = html }
 }
 
 function renderMemory() {
@@ -1719,6 +1780,7 @@ function render() {
     return `<span class="${c}${n ? '' : ' zero'}"><b>${n}</b> ${w}</span>`
   }).join('')
   if ($('summary').dataset.html !== summary) { $('summary').innerHTML = summary; $('summary').dataset.html = summary }
+  renderToday(now, active)
   renderMemory()
   buildFlows()
   renderMessagesButton()

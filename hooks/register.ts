@@ -16,6 +16,7 @@ import {
   adoPrLink,
   adoPrShowArgv,
   cacheTtlOf,
+  costDayOf,
   agentStatusOf,
   boardPlan,
   boardStatus,
@@ -233,7 +234,9 @@ async function refreshSlow($: EngineInterface) {
       tokens: usage.context.tokens ?? null,
       window: usage.context.window,
     }
+    const before = board.costUsd
     board.costUsd = usage.cost?.usd ?? null
+    board.costDay = costDayOf(board.costDay, before, board.costUsd, board.startedAt, now())
   } catch {}
   try {
     const git = await $.process.run(['git', 'branch', '--show-current'], { cwd: board.cwd, timeoutMs: 5_000 })

@@ -249,6 +249,14 @@ reported or else a phase inferred from the running subagent, the tools in flight
 their status, and context use, cost and turn count. Click a tile for the
 prompt, the agent list, the full timeline and a `claude --resume` line to copy.
 
+A strip above the tiles shows today's totals: what every session spent since
+local midnight, ended ones included, how many sessions are active and how many
+need you. Hover the cost for the split per project. A session counts only what
+it spent today, from the cost it had when the day began. A status file written
+by an older version of the hooks has no such baseline: it counts whole if the
+session started today, and not at all otherwise, which a `+` after the cost
+and the hover text point out.
+
 ### Desktop notifications
 
 While you work in a terminal you won't see the tab's title or favicon change.

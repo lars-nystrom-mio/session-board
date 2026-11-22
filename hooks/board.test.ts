@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
-import { addMessage, crossSessionMessage, peerNotice, sendTarget, MAX_MESSAGES, boardStatus, progressOf, progressText, boardPlan, planWaiting, plannedWork, pruneShells, shellReported, shellToolDone, SHELL_MAX_MS, addPrs, adoOrgOf, cronFired, cronToolDone, nextCronMatch, pruneCrons, CRON_EXPIRY_MS, WAKEUP_ID, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, childLabel, deriveState, freshBoard, memoryOf, parseMachine, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, summarize, toolLabel, trimAgents, workItemOf, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
+import { costDayOf, localDay, addMessage, crossSessionMessage, peerNotice, sendTarget, MAX_MESSAGES, boardStatus, progressOf, progressText, boardPlan, planWaiting, plannedWork, pruneShells, shellReported, shellToolDone, SHELL_MAX_MS, addPrs, adoOrgOf, cronFired, cronToolDone, nextCronMatch, pruneCrons, CRON_EXPIRY_MS, WAKEUP_ID, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, childLabel, deriveState, freshBoard, memoryOf, parseMachine, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, summarize, toolLabel, trimAgents, workItemOf, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
 
 describe('summaries', () => {
   test('a tool call becomes one short line', async () => {
@@ -703,4 +703,32 @@ test('the board never gets in the way of a message to another session', async ($
   on('session.send', () => ({ isDelivered: true }))
   const result = await $.session.send({ to: 'session-board-57', text: 'hello' })
   expect(result.isDelivered).toBe(true)
+})
+
+describe('cost per day', () => {
+  const at = (d: number, h: number, m = 0) => new Date(2026, 10, d, h, m).getTime()
+
+  test('the local day is a date string', async () => {
+    expect(localDay(at(22, 0, 5))).toBe('2026-11-22')
+    expect(localDay(at(21, 23, 59))).toBe('2026-11-21')
+  })
+
+  test('a fresh session counts from 0, one from older hooks from now', async () => {
+    expect(costDayOf(null, null, 0.4, at(22, 9), at(22, 9, 1))).toEqual({ day: '2026-11-22', usd: 0 })
+    expect(costDayOf(undefined, 3, 3.5, at(21, 9), at(22, 9))).toEqual({ day: '2026-11-22', usd: 3.5 })
+  })
+
+  test('the baseline holds through the day and moves at midnight', async () => {
+    const today = { day: '2026-11-22', usd: 2 }
+    expect(costDayOf(today, 4, 5, at(21, 9), at(22, 18))).toBe(today)
+    // The first refresh after midnight: yesterday ended where the last one left it.
+    expect(costDayOf({ day: '2026-11-21', usd: 0 }, 6, 6.2, at(21, 9), at(22, 0, 0))).toEqual({ day: '2026-11-22', usd: 6 })
+  })
+
+  test('an unknown cost keeps the baseline, a total that went down was reset', async () => {
+    const today = { day: '2026-11-22', usd: 2 }
+    expect(costDayOf(today, 4, null, at(21, 9), at(22, 18))).toBe(today)
+    expect(costDayOf(null, null, null, at(22, 9), at(22, 18))).toBe(null)
+    expect(costDayOf(today, 4, 1, at(21, 9), at(22, 18))).toEqual({ day: '2026-11-22', usd: 0 })
+  })
 })

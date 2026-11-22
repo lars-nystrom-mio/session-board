@@ -155,6 +155,14 @@ def write_boards(root: Path):
         *plans(now)[0],
         *stalls(now),
     ]
+    # Today's totals: what each spent since its day baseline. See test_today_strip.
+    today = time.strftime('%Y-%m-%d')
+    costs = {C: {'costUsd': 5.0, 'costDay': {'day': today, 'usd': 1.0}},
+             D: {'costUsd': 7.0, 'costDay': {'day': '2000-01-01', 'usd': 3.0}},
+             F: {'costUsd': 2.5, 'startedAt': now - 1000},
+             G: {'costDay': {'day': today, 'usd': 0}}}
+    for b in sessions:
+        b.update(costs.get(b['sessionId'], {}))
     (root / 'sessions').mkdir()
     for b in sessions:
         (root / 'sessions' / f"{b['sessionId']}.json").write_text(json.dumps(b), encoding='utf-8')
@@ -162,6 +170,8 @@ def write_boards(root: Path):
     (root / 'sandboxed').mkdir()
     fake = board(X, 'C:\\sandbox\\session-board', 'idle', 'boxed', now=now, messages=[
         {'t': now - 4 * MIN + 2000, 'dir': 'in', 'peer': 'session-board-f4', 'text': probe}])
+    # From older hooks, started yesterday: no day baseline, so not counted today.
+    fake.update({'costUsd': 9.0, 'startedAt': now - 48 * 3600_000})
     (root / 'sandboxed' / f'{X}.json').write_text(json.dumps(fake), encoding='utf-8')
     (root / 'sandboxed' / f'{Y}.json').write_text(json.dumps(plans(now)[1]), encoding='utf-8')
     shutil.copy(PAGE, root / 'index.html')
@@ -361,6 +371,22 @@ class MessagesView(unittest.TestCase):
         self.tile(S1).click()
         self.settled()
         self.assertIn('looks stalled: Bash has run longer than 20 min', self.page.inner_text('#d-body'))
+
+    def test_today_strip(self):
+        # Spent since each day baseline: resurslogs 4.00, the busy tile 3.18, and
+        # dotnet-upgrade-kit 2.50 (started today, no baseline). A baseline from
+        # another day counts nothing; the sandboxed file from yesterday is left out.
+        strip = self.page.locator('#today')
+        tiles = self.page.locator('#groups .tile').count()
+        waiting = self.page.locator('#groups .tile.s-waiting').count()
+        text = ' '.join(strip.inner_text().split())
+        self.assertIn('$9.68+', text)
+        self.assertIn(f'{tiles} active', text)
+        self.assertIn(f"{waiting} {'needs you' if waiting == 1 else 'need you'}", text)
+        title = strip.locator('.cost').get_attribute('title')
+        self.assertEqual(title.split('\n')[:4], ['By project:', 'resurslogs  $4.00', 'Mio.BI.Services.Export  $3.18', 'dotnet-upgrade-kit  $2.50'])
+        self.assertIn('1 session from before today', title)
+        self.assertLess(strip.bounding_box()['y'], self.tile(A).bounding_box()['y'])
 
     def test_quiet_counts_from_when_the_page_first_saw_the_session(self):
         # The file's times can't tell whether a tool just ended, so a session
