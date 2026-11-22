@@ -30,6 +30,16 @@ describe('summaries', () => {
     // /deliver as orchestrate-delivery starts it: the issue URL wins over other digits.
     expect(workItemOf('https://github.com/o/r/issues/12 medium report-to=orch-2024 name=dlv-12', true)).toBe('12')
     expect(workItemOf('see https://github.com/o/r/issues/12', false)).toBe(null)
+    // A "#" inside a URL or glued to a word names no item; Azure Boards' AB#1234 does.
+    expect(workItemOf('see https://wiki/page#2345', false)).toBe(null)
+    expect(workItemOf('see https://wiki/#2345', false)).toBe(null)
+    expect(workItemOf('page#2345', true)).toBe(null)
+    expect(workItemOf('fix (#1234)', false)).toBe('1234')
+    expect(workItemOf('#1234', false)).toBe('1234')
+    expect(workItemOf('fixes AB#1234', false)).toBe('1234')
+    expect(workItemOf('AB#1234', false)).toBe('1234')
+    expect(workItemOf('XAB#1234', false)).toBe(null)
+    expect(workItemOf('page#2345 then #1234', false)).toBe('1234')
   })
 
   test('only delivery and orchestrate skills read a bare number as the work item', async () => {

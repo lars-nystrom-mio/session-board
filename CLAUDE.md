@@ -59,7 +59,8 @@ install it and how to serve the page. This file is for working on it.
   A session's `plan` draws as a strip above the tiles of its group (`planOf`
   checks its shape, `planHtml` draws it). Each item's state comes from the
   newest session reporting that work item, one outside a sandbox first.
-  A session's work item is `workItemOf` its skill args or prompt: `#1234`, a
+  A session's work item is `workItemOf` its skill args or prompt: `#1234`
+  (or Azure Boards' `AB#1234`, but not a `#` in a URL or glued to a word), a
   GitHub issue URL in skill args (so `/deliver https://github.com/o/r/issues/12`
   is `12`), an Azure DevOps `_workitems/edit/<id>` URL or a bare 4–7 digit
   number in skill args. Only a delivery or orchestrate skill
