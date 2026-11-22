@@ -479,6 +479,7 @@ test('skills.json in the board folder decides which skills take a work item', as
   await turn('/order-delivery 1234', 't3')
   expect((await status()).workItem).toBe('1234')
 })
+
 test('a housekeeping command keeps the skill and its progress report', async ($, on) => {
   const clock = mock.clock(on, { now: 1_000 })
   mock.env(on, { SESSION_BOARD_DIR: '/board' })

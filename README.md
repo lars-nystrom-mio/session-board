@@ -377,7 +377,8 @@ Each entry is a case-insensitive regular expression tried on the skill's name,
 plugin prefix included. A list you give replaces that list's default, so you
 can also drop a name the default matches (such as `order-delivery`); `[]`
 matches nothing. A list you leave out keeps its default, and a bad expression
-is skipped, so a list where none compile matches nothing too. Sessions read the
+is skipped, so a list where none compile matches nothing too. The hooks run
+them on every slash command, so keep them short and anchored. Sessions read the
 file when they start, after `/clear` or after `/reload-plugins`. A missing
 file leaves the defaults, and so does one that isn't valid JSON, which the
 session's events on the board say.
