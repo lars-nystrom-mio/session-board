@@ -1260,22 +1260,24 @@ const TOOL_LIMIT_MS = {
 }
 const TOOL_LIMIT_DEFAULT_MS = 5 * 60_000
 const mins = (ms) => `${Math.round(ms / 60_000)} min`
-const toolLimit = (t) => TOOL_LIMIT_MS[t.tool] ?? TOOL_LIMIT_DEFAULT_MS
+const toolLimit = (t) => Object.hasOwn(TOOL_LIMIT_MS, t.tool) ? TOOL_LIMIT_MS[t.tool] : TOOL_LIMIT_DEFAULT_MS
+// A subagent call runs as long as its subagent works, so it's overdue only once
+// it's past its limit and the page has also seen nothing new for STALL_MS.
+const AGENT_TOOLS = new Set(['Agent', 'Task', 'Workflow'])
 const newest = (list, key) => list?.reduce((m, x) => Math.max(m, x?.[key] ?? 0), 0) ?? 0
 
 // Not everything a session does leaves a time in its file: a tool that ends,
 // or a Read or Grep, which writes no event, just drops out of `tools`. So the
 // page also notes when it last saw a session's file change in anything but its
-// heartbeat, starting from the newest time the file itself holds.
+// heartbeat. It starts counting when the page first sees the session: the
+// file's own times can't say whether a tool just ended.
 const seen = new Map()  // sessionId -> { sig, at }
 function noteActivity(s, now) {
   const sig = JSON.stringify([s.state, s.turns, s.tools.map((t) => t.id), s.events.length, s.events.at(-1)?.t,
     s.agents.map((a) => [a.key, a.status, a.lastTool]), s.messages?.length, s.shells?.map((b) => b.id), s.prs?.length])
   const was = seen.get(s.sessionId)
   if (was?.sig === sig) return
-  const fromFile = Math.max(s.stateSince, s.promptAt ?? 0, newest(s.events, 't'), newest(s.tools, 'since'),
-    newest(s.agents, 'since'), newest(s.agents, 'endedAt'), newest(s.messages, 't'), newest(s.shells, 'since'), newest(s.prs, 'at'))
-  seen.set(s.sessionId, { sig, at: was ? now : fromFile })
+  seen.set(s.sessionId, { sig, at: now })
 }
 
 // null, or { since, tool?, text } for a stalled session. Only the main loop's
@@ -1283,11 +1285,15 @@ function noteActivity(s, now) {
 // overdue: a background agent's slow tool doesn't hold up the session.
 function stallOf(s, now = Date.now()) {
   if (s.state !== 'running' || isStale(s)) return null
-  const waitsOnAgent = s.tools.some((t) => !t.agentId && (t.tool === 'Agent' || t.tool === 'Task'))
-  const over = s.tools.filter((t) => (!t.agentId || waitsOnAgent) && now - t.since > toolLimit(t)).sort((a, b) => a.since - b.since)[0]
+  const last = seen.get(s.sessionId)?.at ?? now
+  // A subagent's tool counts only for one started since the main loop's
+  // newest subagent call, which it waits on; older ones run in the background.
+  const call = newest(s.tools.filter((t) => !t.agentId && AGENT_TOOLS.has(t.tool)), 'since')
+  const fore = new Set(s.agents.filter((a) => call && a.agentId && a.since >= call).map((a) => a.agentId))
+  const over = s.tools.filter((t) => (!t.agentId || fore.has(t.agentId)) && now - t.since > toolLimit(t) &&
+    !(AGENT_TOOLS.has(t.tool) && now - last <= STALL_MS)).sort((a, b) => a.since - b.since)[0]
   if (over) return { since: over.since, tool: over, text: `${over.tool} has run longer than ${mins(toolLimit(over))}` }
   if (s.tools.length) return null
-  const last = seen.get(s.sessionId)?.at ?? s.stateSince
   return now - last > STALL_MS ? { since: last, text: `nothing new for over ${mins(STALL_MS)}` } : null
 }
 
@@ -1659,6 +1665,7 @@ function render() {
   const now = Date.now()
   for (const s of sessions) noteActivity(s, now)
   stalls = new Map(sessions.map((s) => [s.sessionId, stallOf(s, now)]))
+  for (const id of seen.keys()) if (!stalls.has(id)) seen.delete(id)
   const active = sessions.filter((s) => s.state !== 'ended' && !isStale(s))
   const past = sessions.filter((s) => (s.state === 'ended' || isStale(s)) && now - s.updatedAt < HIDE_AFTER_MS)
   // Never sort on heartbeats or busy/idle: they change every few seconds and

@@ -322,9 +322,8 @@ class MessagesView(unittest.TestCase):
         self.assertTrue(more.get_attribute('title'))
 
     def test_a_running_session_that_went_quiet_looks_stalled(self):
-        for sid, word in ((S1, 'stalled · Bash 25m'), (S2, 'stalled · quiet 14m')):
-            self.assertIn('stalled', self.tile(sid).get_attribute('class'))
-            self.assertTrue(self.tile(sid).locator('.since').inner_text().startswith(word))
+        self.assertIn('stalled', self.tile(S1).get_attribute('class'))
+        self.assertTrue(self.tile(S1).locator('.since').inner_text().startswith('stalled · Bash 25m'))
         # Only the overdue tool is marked, and a tool in flight within its limit isn't a stall.
         self.assertEqual(self.tile(S1).locator('.act.over').count(), 1)
         for sid in (S3, S5, S6, A, P):
@@ -341,6 +340,20 @@ class MessagesView(unittest.TestCase):
         self.tile(S1).click()
         self.settled()
         self.assertIn('looks stalled: Bash has run longer than 20 min', self.page.inner_text('#d-body'))
+
+    def test_quiet_counts_from_when_the_page_first_saw_the_session(self):
+        # The file's times can't tell whether a tool just ended, so a session
+        # quiet for 14 minutes by its file only stalls after 10 minutes of watching.
+        self.page.close()
+        self.page = self.browser.new_page(viewport={'width': 1400, 'height': 1000})
+        self.page.on('pageerror', lambda e: self.errors.append(str(e)))
+        self.page.clock.install()
+        self.page.goto(self.url)
+        self.page.wait_for_selector(f'[data-session="{S2}"]')
+        self.assertNotIn('stalled', self.tile(S2).get_attribute('class'))
+        self.page.clock.run_for(11 * MIN)
+        self.page.wait_for_function(f'''document.querySelector('.tile[data-session="{S2}"]').classList.contains('stalled')''')
+        self.assertTrue(self.tile(S2).locator('.since').inner_text().startswith('stalled · quiet 11m'))
 
     def test_a_tool_that_ends_counts_as_activity(self):
         # The build ends: it leaves `tools` and writes no event, so the file's
