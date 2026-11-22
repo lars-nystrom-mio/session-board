@@ -296,14 +296,19 @@ export function addMessage(board: Board, rec: MessageRec): boolean {
 // number, without the repo, as plan items name it) or a bare 4–7 digit number.
 // /deliver from orchestrate-delivery names its issue by URL, and GitHub issue
 // numbers are often too short for the other two forms.
+// A number that is part of a date ("2026-10-31", "10/2026", "#2026-10") or of
+// a word ("orch-2024") is none of these, and a bare number from 1900 to 2099
+// is taken for a year. "#2026" on its own still counts: it names an item.
 export function workItemOf(text: string, allowBare: boolean): string | null {
   const issue = allowBare ? text.match(/https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/issues\/(\d{1,7})\b/i) : null
   if (issue?.[1]) return issue[1]
-  const hash = text.match(/#(\d{3,7})\b/)
-  if (hash?.[1]) return hash[1]
+  for (const m of text.matchAll(/#(\d{3,7})(?!\w|[-/.]\d)/g)) return m[1] ?? null
   if (!allowBare) return null
-  const bare = text.match(/\b(\d{4,7})\b/)
-  return bare?.[1] ?? null
+  for (const m of text.matchAll(/(?<![\w/.-])(\d{4,7})(?!\w|[-/.:]\d)/g)) {
+    const n = Number(m[1])
+    if (n < 1900 || n > 2099) return m[1] ?? null
+  }
+  return null
 }
 
 // A pull request's web URL on GitHub or Azure DevOps (both host styles).

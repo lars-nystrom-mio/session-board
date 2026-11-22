@@ -23,6 +23,19 @@ describe('summaries', () => {
     expect(workItemOf('https://github.com/o/r/issues/12 medium report-to=orch-2024 name=dlv-12', true)).toBe('12')
     expect(workItemOf('see https://github.com/o/r/issues/12', false)).toBe(null)
   })
+
+  test('years and dates are not work items', async () => {
+    expect(workItemOf('2026-10-31', true)).toBe(null)
+    expect(workItemOf('since 2026/10, see 10/2026 or 31.10.2026', true)).toBe(null)
+    expect(workItemOf('report for 2026', true)).toBe(null)
+    expect(workItemOf('name=dlv-25229', true)).toBe(null)
+    expect(workItemOf('2026-10-31 then 25229', true)).toBe('25229')
+    expect(workItemOf('deliver 25229.', true)).toBe('25229')
+    expect(workItemOf('logs from #2026-10-31', false)).toBe(null)
+    expect(workItemOf('dates #2026-10-31 and #1234', false)).toBe('1234')
+    expect(workItemOf('continue on #2026', false)).toBe('2026')
+    expect(workItemOf('since #2026/10', false)).toBe(null)
+  })
 })
 
 describe('pull requests', () => {
