@@ -62,9 +62,11 @@ install it and how to serve the page. This file is for working on it.
   A session's work item is `workItemOf` its skill args or prompt: `#1234`, a
   GitHub issue URL in skill args (so `/deliver https://github.com/o/r/issues/12`
   is `12`), an Azure DevOps `_workitems/edit/<id>` URL or a bare 4–7 digit
-  number in skill args. Those last three count only for a skill whose name
-  says deliver or orchestrate (`skillTakesWorkItem`), so `/code-review high
-  1234` names no work item. A number inside a date or a word (`2026-10-31`,
+  number in skill args. Only a delivery or orchestrate skill
+  (`skillTakesWorkItem`, by name) reads one from its args, so neither
+  `/code-review high 1234` nor `/code-review #1234` names a work item, and a
+  wrapper like `/loop 5m /deliver 1234` gives its inner command's
+  (`skillWorkItem`). A number inside a date or a word (`2026-10-31`,
   `orch-2024`) never counts, nor a bare 1900–2099 (a year) unless it opens
   the args. Plan items name work items by number alone, so two repos' `#12` in one plan are the same row. The
   board starts nothing from a plan.

@@ -331,6 +331,25 @@ export function addMessage(board: Board, rec: MessageRec): boolean {
   return true
 }
 
+// Only a skill that takes a work item reads one from its args: a delivery
+// or an orchestration, by name ("deliver", "deliver-story",
+// "gh-issue-delivery", "work-item-delivery", "orchestrate-delivery", with or
+// without a plugin prefix). Others, like "/code-review high 1234" or
+// "/code-review #1234", name a PR or something else by number. A skill that
+// runs another command, like "/loop 5m /work-item-delivery 25229", gives the
+// work item of the command it runs.
+const WORK_ITEM_SKILL = /(?:^|[-:])(?:deliver(?:y|-story)?|orchestrate(?:-delivery)?)$/i
+
+export function skillTakesWorkItem(name: string): boolean {
+  return WORK_ITEM_SKILL.test(name)
+}
+
+export function skillWorkItem(name: string, args: string, depth = 0): string | null {
+  if (skillTakesWorkItem(name)) return workItemOf(args, true)
+  const inner = depth < 2 ? args.match(/(?:^|\s)\/([\w:-]+)(?:\s+([\s\S]*))?$/) : null
+  return inner?.[1] ? skillWorkItem(inner[1], inner[2] ?? '', depth + 1) : null
+}
+
 // A work item id: "#1234" anywhere, or in skill args a GitHub issue URL (its
 // number, without the repo, as plan items name it) or a bare 4–7 digit number.
 // /deliver from orchestrate-delivery names its issue by URL, and GitHub issue
@@ -340,13 +359,6 @@ export function addMessage(board: Board, rec: MessageRec): boolean {
 // taken for a year unless it opens the args ("/deliver 2045"). "#2026" on its
 // own still counts: it names an item. An Azure DevOps work item URL in skill
 // args gives its id, like a GitHub issue URL.
-// Only skills that take a work item read a bare number or an issue URL in
-// their args as one: a delivery or an orchestration. Others, like
-// "/code-review high 1234", name a PR or something else by number.
-export function skillTakesWorkItem(name: string): boolean {
-  return /deliver|orchestrat/i.test(name)
-}
-
 const DATE = /^(?:(?:19|20)\d\d(?:[-/.]\d{1,2}){1,2}|(?:\d{1,2}[-/.]){1,2}(?:19|20)\d\d)$/
 
 export function workItemOf(text: string, allowBare: boolean): string | null {

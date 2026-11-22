@@ -345,8 +345,9 @@ The dashboard reads it once when the page loads; reload the page after editing.
 A missing or broken file leaves the defaults.
 
 The work item is taken from the arguments of a delivery or orchestrate skill
-(`/deliver 1234` → `#1234`) or a `#1234` in the prompt. A bare number for any
-other skill, such as the PR in `/code-review high 1234`, is not a work item.
+(`/deliver 1234` → `#1234`) or a `#1234` in the prompt. Any other skill's
+number, such as the PR in `/code-review high 1234` or `/code-review #1234`, is
+not a work item.
 
 ## Sessions in a sandbox
 

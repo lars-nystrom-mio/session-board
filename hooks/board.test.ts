@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
-import { STALE_BOARD_MS, removeScript, staleBoards, costDayOf, localDay, addMessage, crossSessionMessage, peerNotice, sendTarget, MAX_MESSAGES, boardStatus, progressOf, progressText, boardPlan, planWaiting, plannedWork, pruneShells, shellReported, shellToolDone, SHELL_MAX_MS, addPrs, adoOrgOf, cronFired, cronToolDone, nextCronMatch, pruneCrons, CRON_EXPIRY_MS, WAKEUP_ID, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, childLabel, deriveState, freshBoard, memoryOf, parseMachine, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, summarize, toolLabel, trimAgents, workItemOf, skillTakesWorkItem, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
+import { STALE_BOARD_MS, removeScript, staleBoards, costDayOf, localDay, addMessage, crossSessionMessage, peerNotice, sendTarget, MAX_MESSAGES, boardStatus, progressOf, progressText, boardPlan, planWaiting, plannedWork, pruneShells, shellReported, shellToolDone, SHELL_MAX_MS, addPrs, adoOrgOf, cronFired, cronToolDone, nextCronMatch, pruneCrons, CRON_EXPIRY_MS, WAKEUP_ID, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, childLabel, deriveState, freshBoard, memoryOf, parseMachine, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, summarize, toolLabel, trimAgents, workItemOf, skillTakesWorkItem, skillWorkItem, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
 
 describe('summaries', () => {
   test('a tool call becomes one short line', async () => {
@@ -25,10 +25,19 @@ describe('summaries', () => {
   })
 
   test('only delivery and orchestrate skills read a bare number as the work item', async () => {
-    for (const name of ['deliver', 'deliver-story', 'gh-issue-delivery', 'work-item-delivery', 'orchestrate-delivery', 'gh-orchestrate-delivery'])
+    for (const name of ['deliver', 'deliver-story', 'gh-issue-delivery', 'work-item-delivery', 'orchestrate-delivery', 'gh-orchestrate-delivery', 'orchestrate', 'tools:deliver'])
       expect(skillTakesWorkItem(name)).toBe(true)
-    for (const name of ['code-review', 'security-review', 'pr', 'loop', 'log-check'])
+    for (const name of ['code-review', 'security-review', 'pr', 'loop', 'log-check', 'delivery-report', 'undelivered-orders', 'check-deliveries'])
       expect(skillTakesWorkItem(name)).toBe(false)
+    expect(skillWorkItem('deliver', '1234, use autocomplete')).toBe('1234')
+    expect(skillWorkItem('gh-issue-delivery', 'https://github.com/o/r/issues/49 medium')).toBe('49')
+    expect(skillWorkItem('code-review', 'high 1234')).toBe(null)
+    expect(skillWorkItem('code-review', 'medium #1234')).toBe(null)
+    expect(skillWorkItem('delivery-report', '123456')).toBe(null)
+    // A wrapper skill gives the work item of the command it runs.
+    expect(skillWorkItem('loop', '5m /work-item-delivery 25229')).toBe('25229')
+    expect(skillWorkItem('loop', '10m /gh-issue-delivery https://github.com/o/r/issues/49')).toBe('49')
+    expect(skillWorkItem('loop', '5m /code-review high 1234')).toBe(null)
   })
 
   test('years and dates are not work items', async () => {
@@ -286,12 +295,21 @@ test('a skill that takes a PR number does not set the work item', async ($, on) 
   await $.session.start({ cwd: '/x', surface: null, isInteractive: true })
   await turn('/code-review high 1234', 't1')
   expect((await status()).workItem ?? null).toBe(null)
+  await turn('/code-review medium #1234', 't1b')
+  expect((await status()).workItem ?? null).toBe(null)
 
   await turn('/gh-issue-delivery https://github.com/o/r/issues/49 medium', 't2')
   expect((await status()).workItem).toBe('49')
   // The delivery runs code-review on its PR in a later turn: the work item stays.
-  await turn('<agent-message from="a1">verified</agent-message>', 't3', { skill: 'code-review', args: 'medium 62' })
+  await turn('<agent-message from="a1">verified</agent-message>', 't3', { skill: 'code-review', args: 'medium 1234' })
   expect((await status()).workItem).toBe('49')
+  await turn('/code-review high #1234', 't4')
+  expect((await status()).workItem).toBe('49')
+  // A plain prompt still names a work item with "#".
+  await turn('now continue on #1300', 't5')
+  expect((await status()).workItem).toBe('1300')
+  await turn('/loop 5m /work-item-delivery 25229', 't6')
+  expect((await status()).workItem).toBe('25229')
 })
 
 describe('prompt cache', () => {

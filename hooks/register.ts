@@ -48,7 +48,7 @@ import {
   sessionTitleOf,
   shellReported,
   shellToolDone,
-  skillTakesWorkItem,
+  skillWorkItem,
   slashCommand,
   summarize,
   toolLabel,
@@ -499,7 +499,7 @@ function setSkill(name: string, args: string) {
   if (!skillSetThisTurn || !board.skill) {
     board.skill = { name, args, at: now() }
     skillSetThisTurn = true
-    board.workItem = workItemOf(args, skillTakesWorkItem(name)) ?? board.workItem
+    board.workItem = skillWorkItem(name, args) ?? board.workItem
   }
   event('skill', `${name} ${args}`)
 }
@@ -570,7 +570,9 @@ async function turnStarted($: EngineInterface, text: string) {
     // A prompt after done leaves done standing: the task is the model's to
     // reopen with board_status "working", the activity is ours.
     notePrs(prLinksOf(text))
-    b.workItem = workItemOf(shown, false) ?? b.workItem
+    // A slash command's work item is the skill's (setSkill above): a "#1234"
+    // in /code-review's args is a PR.
+    if (!slash) b.workItem = workItemOf(shown, false) ?? b.workItem
   }
   schedule($)
 }
