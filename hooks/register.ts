@@ -52,6 +52,9 @@ import {
   shellReported,
   shellToolDone,
   skillWorkItem,
+  skillRulesOf,
+  DEFAULT_SKILL_RULES,
+  type SkillRules,
   slashCommand,
   housekeepingCommand,
   summarize,
@@ -351,6 +354,18 @@ async function removeFiles($: EngineInterface, paths: string[]) {
   } catch {}
 }
 
+// skills.json in the board folder, read at each load: a missing or broken
+// file leaves the default skill rules.
+let skillRules: SkillRules = DEFAULT_SKILL_RULES
+
+async function loadSkillRules($: EngineInterface, dir: string) {
+  skillRules = DEFAULT_SKILL_RULES
+  try {
+    const path = `${dir}/skills.json`
+    if (await $.fs.exists(path)) skillRules = skillRulesOf(JSON.parse(await $.fs.read(path)))
+  } catch {}
+}
+
 // The served dashboard always matches the one this plugin ships.
 async function copyDashboard($: EngineInterface, dir: string) {
   try {
@@ -421,6 +436,7 @@ async function init($: EngineInterface, cwd: string, interactive: boolean, reaso
     planTool = (await $.tool.register({ ...BOARD_PLAN_TOOL, isDeferred: true })).tool
   } catch {}
   await copyDashboard($, dir)
+  await loadSkillRules($, dir)
   void pruneOldBoards($, dir, id)
   await refreshSlow($)
   await readTranscript($)
@@ -504,7 +520,7 @@ function setSkill(name: string, args: string) {
     // The work item comes from the whole args; only the stored copy is clipped.
     board.skill = { name, args: clip(args, 200), at: now() }
     skillSetThisTurn = true
-    board.workItem = skillWorkItem(name, args) ?? board.workItem
+    board.workItem = skillWorkItem(name, args, skillRules) ?? board.workItem
   }
   event('skill', `${name} ${args}`)
 }

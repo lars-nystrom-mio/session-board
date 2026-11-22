@@ -358,6 +358,28 @@ The work item is taken from the arguments of a delivery or orchestrate skill
 number is not a work item, and neither is any number given to a review or PR
 skill, such as the PR in `/code-review high 1234` or `/code-review #1234`.
 
+Which skills count as which goes by name. Out of the box a delivery or
+orchestrate skill is one whose name ends in `deliver`, `delivery`,
+`deliver-story`, `orchestrate` or `orchestrate-delivery`; a review or PR skill
+ends in `review`, `ultrareview`, `pr` or `simplify`; and `/loop` and
+`/schedule` give the work item of the command they run. To change that, put a
+`skills.json` in the board folder (`~/.claude/board/skills.json`):
+
+```json
+{
+  "workItem": ["(^|[-:])(deliver|delivery|orchestrate)$", "^deliver-issue$", "^implement-story$"],
+  "pr": ["(^|[-:])(review|pr)$"],
+  "wrapper": ["^(loop|schedule)$"]
+}
+```
+
+Each entry is a case-insensitive regular expression tried on the skill's name,
+plugin prefix included. A list you give replaces that list's default, so you
+can also drop a name the default matches (such as `order-delivery`); `[]`
+matches nothing. A list you leave out keeps its default, and a bad expression
+is skipped. Sessions read the file when they start, or after
+`/reload-plugins`; a missing or broken file leaves the defaults.
+
 ## Sessions in a sandbox
 
 A session in a Docker sandbox (`sbx`) can show up on the board on your PC too.

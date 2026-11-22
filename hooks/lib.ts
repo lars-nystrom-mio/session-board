@@ -408,19 +408,50 @@ export function addMessage(board: Board, rec: MessageRec): boolean {
 // so neither "/code-review high 1234" nor "/code-review #1234" gives one.
 // /loop and /schedule give the work item of the command they run when one
 // opens their args ("5m /work-item-delivery 25229"), else a "#1234" in them.
-const WORK_ITEM_SKILL = /(?:^|[-:])(?:deliver(?:y|-story)?|orchestrate(?:-delivery)?)$/i
-const PR_SKILL = /(?:^|[-:])(?:review|ultrareview|pr|simplify)$/i
-const WRAPPER_SKILL = /(?:^|:)(?:loop|schedule)$/i
+// Those three lists of names are the defaults; skills.json in the board
+// folder can replace any of them (skillRulesOf).
+export type SkillRules = { workItem: RegExp[]; pr: RegExp[]; wrapper: RegExp[] }
 
-export function skillTakesWorkItem(name: string): boolean {
-  return WORK_ITEM_SKILL.test(name)
+export const DEFAULT_SKILL_RULES: SkillRules = {
+  workItem: [/(?:^|[-:])(?:deliver(?:y|-story)?|orchestrate(?:-delivery)?)$/i],
+  pr: [/(?:^|[-:])(?:review|ultrareview|pr|simplify)$/i],
+  wrapper: [/(?:^|:)(?:loop|schedule)$/i],
 }
 
-export function skillWorkItem(name: string, args: string, depth = 0): string | null {
-  if (skillTakesWorkItem(name)) return workItemOf(args, true)
-  if (PR_SKILL.test(name)) return null
-  const inner = depth < 2 && WRAPPER_SKILL.test(name) ? args.match(/^\s*(?:\S+\s+)?\/([\w:.-]+)(?:\s+([\s\S]*))?$/) : null
-  if (inner?.[1]) return skillWorkItem(inner[1], inner[2] ?? '', depth + 1)
+// skills.json: { "workItem": [...], "pr": [...], "wrapper": [...] }, each an
+// optional list of case-insensitive regular expressions tried on the skill's
+// name (plugin prefix included). A list given replaces that list's default,
+// so it can drop a name the default matches; [] matches nothing. A key left
+// out, or not a list of strings, keeps its default. A bad regex skips that
+// entry only, and a list with none that compile keeps the default.
+export function skillRulesOf(json: unknown): SkillRules {
+  const rules = { ...DEFAULT_SKILL_RULES }
+  if (!json || typeof json !== 'object' || Array.isArray(json)) return rules
+  for (const key of ['workItem', 'pr', 'wrapper'] as const) {
+    const list = (json as Record<string, unknown>)[key]
+    if (!Array.isArray(list) || !list.every((p) => typeof p === 'string')) continue
+    const own: RegExp[] = []
+    for (const p of list as string[]) {
+      try {
+        own.push(new RegExp(p, 'i'))
+      } catch {}
+    }
+    if (own.length || !list.length) rules[key] = own
+  }
+  return rules
+}
+
+const matchesAny = (list: RegExp[], name: string) => list.some((r) => r.test(name))
+
+export function skillTakesWorkItem(name: string, rules: SkillRules = DEFAULT_SKILL_RULES): boolean {
+  return matchesAny(rules.workItem, name)
+}
+
+export function skillWorkItem(name: string, args: string, rules: SkillRules = DEFAULT_SKILL_RULES, depth = 0): string | null {
+  if (skillTakesWorkItem(name, rules)) return workItemOf(args, true)
+  if (matchesAny(rules.pr, name)) return null
+  const inner = depth < 2 && matchesAny(rules.wrapper, name) ? args.match(/^\s*(?:\S+\s+)?\/([\w:.-]+)(?:\s+([\s\S]*))?$/) : null
+  if (inner?.[1]) return skillWorkItem(inner[1], inner[2] ?? '', rules, depth + 1)
   return workItemOf(args, false)
 }
 

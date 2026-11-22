@@ -74,7 +74,9 @@ install it and how to serve the page. This file is for working on it.
   (`skillTakesWorkItem`, by name) reads a URL or bare number from its args,
   a `#1234` counts for any skill but a PR-taking one (`/code-review #1234`
   names no work item), and `/loop 5m /deliver 1234` gives its inner
-  command's (`skillWorkItem`). A number inside a date or a word (`2026-10-31`,
+  command's (`skillWorkItem`). Those three name lists are
+  `DEFAULT_SKILL_RULES` in `lib.ts`; `skills.json` in the board folder,
+  read at each load, replaces any of them (`skillRulesOf`). A number inside a date or a word (`2026-10-31`,
   `orch-2024`) never counts, nor a bare 1900–2099 (a year) unless it opens
   the args, nor a card or phone number (`1234-5678-9012`,
   `1234 5678 9012 3456`, `555 123 4567`). Plan items name work items by number alone, so two repos' `#12` in one plan are the same row. The

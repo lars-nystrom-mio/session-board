@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
-import { STALE_BOARD_MS, removeScript, staleBoards, costDayOf, localDay, addMessage, crossSessionMessage, peerNotice, sendTarget, MAX_MESSAGES, boardStatus, progressOf, progressText, boardPlan, planWaiting, plannedWork, pruneShells, shellReported, shellToolDone, SHELL_MAX_MS, addPrs, adoOrgOf, cronFired, cronToolDone, nextCronMatch, pruneCrons, CRON_EXPIRY_MS, WAKEUP_ID, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, stepSeen, streamed, toolEndSeen, childLabel, deriveState, freshBoard, memoryOf, parseMachine, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, housekeepingCommand, summarize, toolLabel, trimAgents, workItemOf, skillTakesWorkItem, skillWorkItem, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
+import { STALE_BOARD_MS, removeScript, staleBoards, costDayOf, localDay, addMessage, crossSessionMessage, peerNotice, sendTarget, MAX_MESSAGES, boardStatus, progressOf, progressText, boardPlan, planWaiting, plannedWork, pruneShells, shellReported, shellToolDone, SHELL_MAX_MS, addPrs, adoOrgOf, cronFired, cronToolDone, nextCronMatch, pruneCrons, CRON_EXPIRY_MS, WAKEUP_ID, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, stepSeen, streamed, toolEndSeen, childLabel, deriveState, freshBoard, memoryOf, parseMachine, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, housekeepingCommand, summarize, toolLabel, trimAgents, workItemOf, skillTakesWorkItem, skillWorkItem, skillRulesOf, DEFAULT_SKILL_RULES, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
 
 describe('summaries', () => {
   test('a tool call becomes one short line', async () => {
@@ -85,6 +85,41 @@ describe('summaries', () => {
     expect(skillWorkItem('code-review', 'explain why /deliver 1234 failed')).toBe(null)
     expect(skillWorkItem('fix-issue', 'see /deliver 1234')).toBe(null)
     expect(skillWorkItem('loop', '5m see /deliver 1234')).toBe(null)
+  })
+
+  test('skills.json replaces the lists of skill names it gives', async () => {
+    // Out of the box a delivery skill by another name gets no work item from
+    // a bare number, and a skill ending in -delivery does.
+    expect(skillWorkItem('deliver-issue', '1234')).toBe(null)
+    expect(skillWorkItem('implement-story', '1234')).toBe(null)
+    expect(skillWorkItem('order-delivery', '1234')).toBe('1234')
+    const rules = skillRulesOf({
+      workItem: ['^(?:[\\w-]+:)?(?:deliver-issue|implement-story|gh-issue-delivery)$'],
+      pr: ['review$'],
+      wrapper: ['^every$'],
+    })
+    expect(skillWorkItem('deliver-issue', '1234', rules)).toBe('1234')
+    expect(skillWorkItem('tools:implement-story', 'https://github.com/o/r/issues/49', rules)).toBe('49')
+    expect(skillWorkItem('order-delivery', '1234', rules)).toBe(null)
+    expect(skillWorkItem('order-delivery', '#1234', rules)).toBe('1234')
+    expect(skillTakesWorkItem('DELIVER-ISSUE', rules)).toBe(true)
+    expect(skillWorkItem('code-review', '#1234', rules)).toBe(null)
+    // pr was replaced: "simplify" takes a work item again.
+    expect(skillWorkItem('simplify', '#1234', rules)).toBe('1234')
+    expect(skillWorkItem('every', '5m /deliver-issue 1234', rules)).toBe('1234')
+    expect(skillWorkItem('loop', '5m /deliver-issue 1234', rules)).toBe(null)
+  })
+
+  test('skills.json keeps the default of a list it leaves out or gets wrong', async () => {
+    for (const json of [null, 'x', 42, [], {}, { workItem: 'deliver$' }, { workItem: [1] }, { workItem: ['('] }])
+      expect(skillRulesOf(json)).toEqual(DEFAULT_SKILL_RULES)
+    // A bad regex skips that entry only.
+    const rules = skillRulesOf({ workItem: ['(', '^deliver-issue$'] })
+    expect(skillTakesWorkItem('deliver-issue', rules)).toBe(true)
+    expect(skillTakesWorkItem('deliver', rules)).toBe(false)
+    expect(rules.pr).toBe(DEFAULT_SKILL_RULES.pr)
+    // An empty list matches nothing.
+    expect(skillWorkItem('loop', '5m /deliver 1234', skillRulesOf({ wrapper: [] }))).toBe(null)
   })
 
   test('years and dates are not work items', async () => {
@@ -400,6 +435,40 @@ test('a skill that takes a PR number does not set the work item', async ($, on) 
   expect((await status()).workItem).toBe('25229')
 })
 
+test('skills.json in the board folder decides which skills take a work item', async ($, on) => {
+  const clock = mock.clock(on, { now: 1_000 })
+  mock.env(on, { SESSION_BOARD_DIR: '/board' })
+  const files = new Map<string, string>()
+  // The engine resolves the board folder to an absolute path.
+  const skillsJson = (path: string) => /[\\/]board[\\/]skills\.json$/.test(path)
+  const rules = JSON.stringify({ workItem: ['^deliver-issue$'] })
+  on('session.id', () => ({ value: 's1' }))
+  on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  on('fs.exists', (_$, e) => ({ value: skillsJson(e.path) || files.has(e.path) }))
+  on('fs.read', (_$, e) => ({ value: skillsJson(e.path) ? rules : files.get(e.path) ?? '' }))
+  on('fs.write', (_$, e) => {
+    files.set(e.path, e.text)
+    return { value: undefined }
+  })
+  on('fs.list', () => ({ value: [] }))
+  on('turn.start', (_$, e) => ({ turnId: e.turnId }))
+  on('turn.complete', () => ({ text: '' }))
+  const status = async () => {
+    await clock.advance(1_000)
+    const [, text] = [...files].find(([path]) => /[\\/]sessions[\\/]s1\.json$/.test(path)) ?? []
+    return JSON.parse(text ?? '{}')
+  }
+  const turn = async (text: string, turnId: string) => {
+    await $.turn.start({ text, turnId })
+    await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId, reason: 'answer' })
+  }
+
+  await $.session.start({ cwd: '/x', surface: null, isInteractive: true })
+  await turn('/order-delivery 1234', 't1')
+  expect((await status()).workItem ?? null).toBe(null)
+  await turn('/deliver-issue 4321', 't2')
+  expect((await status()).workItem).toBe('4321')
+})
 test('a housekeeping command keeps the skill and its progress report', async ($, on) => {
   const clock = mock.clock(on, { now: 1_000 })
   mock.env(on, { SESSION_BOARD_DIR: '/board' })
