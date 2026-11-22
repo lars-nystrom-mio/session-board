@@ -2418,7 +2418,9 @@ let polling = false
 let pollWorker = null
 try {
   const src = 'let t; onmessage = (e) => { clearTimeout(t); if (e.data > 0) t = setTimeout(() => postMessage(0), e.data) }'
-  pollWorker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })))
+  const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }))
+  pollWorker = new Worker(url)
+  URL.revokeObjectURL(url)
   pollWorker.onmessage = () => poll()
   pollWorker.onerror = () => { pollWorker = null; if (!polling) schedulePoll() }
 } catch { pollWorker = null }
