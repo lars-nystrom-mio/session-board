@@ -111,15 +111,16 @@ describe('summaries', () => {
   })
 
   test('skills.json keeps the default of a list it leaves out or gets wrong', async () => {
-    for (const json of [null, 'x', 42, [], {}, { workItem: 'deliver$' }, { workItem: [1] }, { workItem: ['('] }])
+    for (const json of [null, 'x', 42, [], {}, { workItem: 'deliver$' }, { workItem: [1] }])
       expect(skillRulesOf(json)).toEqual(DEFAULT_SKILL_RULES)
     // A bad regex skips that entry only.
     const rules = skillRulesOf({ workItem: ['(', '^deliver-issue$'] })
     expect(skillTakesWorkItem('deliver-issue', rules)).toBe(true)
     expect(skillTakesWorkItem('deliver', rules)).toBe(false)
     expect(rules.pr).toBe(DEFAULT_SKILL_RULES.pr)
-    // An empty list matches nothing.
+    // An empty list matches nothing, and so does one where nothing compiles.
     expect(skillWorkItem('loop', '5m /deliver 1234', skillRulesOf({ wrapper: [] }))).toBe(null)
+    expect(skillWorkItem('order-delivery', '1234', skillRulesOf({ workItem: ['^(deliver-issue$'] }))).toBe(null)
   })
 
   test('years and dates are not work items', async () => {
@@ -441,7 +442,8 @@ test('skills.json in the board folder decides which skills take a work item', as
   const files = new Map<string, string>()
   // The engine resolves the board folder to an absolute path.
   const skillsJson = (path: string) => /[\\/]board[\\/]skills\.json$/.test(path)
-  const rules = JSON.stringify({ workItem: ['^deliver-issue$'] })
+  // Saved with a byte-order mark, as Windows PowerShell 5.1 does.
+  let rules = '\u{FEFF}' + JSON.stringify({ workItem: ['^deliver-issue$'] })
   on('session.id', () => ({ value: 's1' }))
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('fs.exists', (_$, e) => ({ value: skillsJson(e.path) || files.has(e.path) }))
@@ -468,6 +470,14 @@ test('skills.json in the board folder decides which skills take a work item', as
   expect((await status()).workItem ?? null).toBe(null)
   await turn('/deliver-issue 4321', 't2')
   expect((await status()).workItem).toBe('4321')
+
+  // A broken file leaves the defaults and says so in the events.
+  rules = '{ workItem: '
+  await $.session.start({ cwd: '/x', surface: null, isInteractive: true })
+  const after = await status()
+  expect(after.events.some((e: { text: string }) => e.text.startsWith('skills.json unreadable'))).toBe(true)
+  await turn('/order-delivery 1234', 't3')
+  expect((await status()).workItem).toBe('1234')
 })
 test('a housekeeping command keeps the skill and its progress report', async ($, on) => {
   const clock = mock.clock(on, { now: 1_000 })

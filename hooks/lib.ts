@@ -423,7 +423,8 @@ export const DEFAULT_SKILL_RULES: SkillRules = {
 // name (plugin prefix included). A list given replaces that list's default,
 // so it can drop a name the default matches; [] matches nothing. A key left
 // out, or not a list of strings, keeps its default. A bad regex skips that
-// entry only, and a list with none that compile keeps the default.
+// entry only, so a list where none compile matches nothing, as [] does: a
+// typo never brings back a name the list was written to drop.
 export function skillRulesOf(json: unknown): SkillRules {
   const rules = { ...DEFAULT_SKILL_RULES }
   if (!json || typeof json !== 'object' || Array.isArray(json)) return rules
@@ -436,7 +437,7 @@ export function skillRulesOf(json: unknown): SkillRules {
         own.push(new RegExp(p, 'i'))
       } catch {}
     }
-    if (own.length || !list.length) rules[key] = own
+    rules[key] = own
   }
   return rules
 }
