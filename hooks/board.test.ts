@@ -47,6 +47,17 @@ describe('summaries', () => {
     expect(workItemOf('fix owner/repo#1234', false)).toBe('1234')
     expect(workItemOf('o/r#1234 medium', true)).toBe('1234')
     expect(workItemOf('see https://github.com/o/r#1234', false)).toBe(null)
+    expect(workItemOf('Fixes (owner/repo#1234)', false)).toBe('1234')
+    expect(workItemOf('"o/r#1234"', false)).toBe('1234')
+    expect(workItemOf('wiki-page-#1234', false)).toBe(null)
+    expect(workItemOf('see wiki.example.com/page#2345', false)).toBe(null)
+    expect(workItemOf('a/b/c#1234', false)).toBe(null)
+    expect(workItemOf('xab#1234', false)).toBe(null)
+    // A long run without spaces before a "#" stays cheap.
+    const run = 'x'.repeat(100_000)
+    const start = Date.now()
+    expect(workItemOf(`${run}#1234 ${run}`, false)).toBe(null)
+    expect(Date.now() - start).toBeLessThan(500)
   })
 
   test('only delivery and orchestrate skills read a bare number as the work item', async () => {

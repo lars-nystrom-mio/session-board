@@ -61,7 +61,8 @@ install it and how to serve the page. This file is for working on it.
   newest session reporting that work item, one outside a sandbox first.
   A session's work item is `workItemOf` its skill args or prompt: `#1234`
   (or Azure Boards' `AB#1234` or GitHub's `owner/repo#1234`, but not a `#` in
-  a URL or glued to another word), a
+  a URL or glued to another word; a path like `docs/spec#12` reads as
+  owner/repo), a
   GitHub issue URL in skill args (so `/deliver https://github.com/o/r/issues/12`
   is `12`), an Azure DevOps `_workitems/edit/<id>` URL or a bare 4–7 digit
   number in skill args. Only a delivery or orchestrate skill
