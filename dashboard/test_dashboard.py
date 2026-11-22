@@ -404,7 +404,10 @@ class MessagesView(unittest.TestCase):
         self.page.goto(self.url)
         self.page.wait_for_selector(f'[data-session="{S2}"]')
         self.assertNotIn('stalled', self.tile(S2).get_attribute('class'))
-        self.page.clock.run_for(11 * MIN)
+        # The page redraws times on a 1 s interval that started before it saw
+        # the session, so the last redraw within 11 minutes can fall just short
+        # of 11 minutes after that sight. Two seconds more always reach it.
+        self.page.clock.run_for(11 * MIN + 2_000)
         self.page.wait_for_function(f'''document.querySelector('.tile[data-session="{S2}"]').classList.contains('stalled')''')
         self.assertTrue(self.tile(S2).locator('.since').inner_text().startswith('stalled · quiet 11m'))
 
