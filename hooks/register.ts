@@ -15,6 +15,7 @@ import {
   addPrs,
   stepSeen,
   streamed,
+  toolEndSeen,
   adoPrLink,
   adoPrShowArgv,
   cacheTtlOf,
@@ -667,6 +668,7 @@ async function toolStarted($: EngineInterface, tool: string, input: Record<strin
 
 function toolEnded($: EngineInterface, rec: ToolRec, tool: string, outcome: 'ok' | 'denied' | 'failed', prs: Omit<PrRec, 'at'>[]) {
   tools.delete(rec.id)
+  if (board) toolEndSeen(board, rec.agentId, now())
   notePrs(prs, agentName(rec.agentId))
   if (outcome === 'denied') event('error', `${rec.tool} denied`, agentName(rec.agentId))
   if (outcome === 'failed') event('error', `${rec.tool} failed${rec.summary ? `: ${rec.summary}` : ''}`, agentName(rec.agentId))

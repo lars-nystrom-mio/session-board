@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
-import { STALE_BOARD_MS, removeScript, staleBoards, costDayOf, localDay, addMessage, crossSessionMessage, peerNotice, sendTarget, MAX_MESSAGES, boardStatus, progressOf, progressText, boardPlan, planWaiting, plannedWork, pruneShells, shellReported, shellToolDone, SHELL_MAX_MS, addPrs, adoOrgOf, cronFired, cronToolDone, nextCronMatch, pruneCrons, CRON_EXPIRY_MS, WAKEUP_ID, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, stepSeen, streamed, childLabel, deriveState, freshBoard, memoryOf, parseMachine, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, housekeepingCommand, summarize, toolLabel, trimAgents, workItemOf, skillTakesWorkItem, skillWorkItem, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
+import { STALE_BOARD_MS, removeScript, staleBoards, costDayOf, localDay, addMessage, crossSessionMessage, peerNotice, sendTarget, MAX_MESSAGES, boardStatus, progressOf, progressText, boardPlan, planWaiting, plannedWork, pruneShells, shellReported, shellToolDone, SHELL_MAX_MS, addPrs, adoOrgOf, cronFired, cronToolDone, nextCronMatch, pruneCrons, CRON_EXPIRY_MS, WAKEUP_ID, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, stepSeen, streamed, toolEndSeen, childLabel, deriveState, freshBoard, memoryOf, parseMachine, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, housekeepingCommand, summarize, toolLabel, trimAgents, workItemOf, skillTakesWorkItem, skillWorkItem, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
 
 describe('summaries', () => {
   test('a tool call becomes one short line', async () => {
@@ -484,6 +484,19 @@ describe('model steps', () => {
     expect(b.lastStepAt).toBe(100)
     stepSeen(b, undefined, 300)
     expect(b.lastStepAt).toBe(300)
+  })
+
+  test('a main-thread tool ending moves lastToolEnd on, a subagent one does not', () => {
+    const b = freshBoard('s1', '/x', 0)
+    expect(b.lastToolEnd ?? null).toBe(null)
+    toolEndSeen(b, undefined, 100)
+    expect(b.lastToolEnd).toBe(100)
+    toolEndSeen(b, 'agent-1', 200)
+    expect(b.lastToolEnd).toBe(100)
+    toolEndSeen(b, undefined, 50) // never goes back
+    expect(b.lastToolEnd).toBe(100)
+    toolEndSeen(b, undefined, 300)
+    expect(b.lastToolEnd).toBe(300)
   })
 
   test('streamed forwards a stream as yield* would and notes each chunk', async () => {

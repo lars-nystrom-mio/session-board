@@ -121,6 +121,9 @@ export type Board = {
   // (turn.step) moves it on, and the heartbeat writes it. The page counts it as
   // activity, so a long streamed answer doesn't look like a hung session.
   lastStepAt?: number | null
+  // When a main-thread tool last ended, Read and Grep included. Kept so a page
+  // that loads later can tell how long the session has been quiet.
+  lastToolEnd?: number | null
 }
 
 // A session's cost at the start of a local day: `day` is YYYY-MM-DD in this
@@ -156,6 +159,13 @@ export function costDayOf(prev: CostDay | null | undefined, before: number | nul
 export function stepSeen(b: Board, agentId: string | undefined, t: number): void {
   if (agentId || t <= (b.lastStepAt ?? 0)) return
   b.lastStepAt = t
+}
+
+// Notes that a tool ended at `t`. Like stepSeen, only the main thread's count:
+// a background agent's tools ending say nothing about whether the main loop hangs.
+export function toolEndSeen(b: Board, agentId: string | undefined, t: number): void {
+  if (agentId || t <= (b.lastToolEnd ?? 0)) return
+  b.lastToolEnd = t
 }
 
 // Forwards a model stream, calling `seen` as each chunk arrives. Values sent
