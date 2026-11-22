@@ -40,6 +40,13 @@ describe('summaries', () => {
     expect(workItemOf('AB#1234', false)).toBe('1234')
     expect(workItemOf('XAB#1234', false)).toBe(null)
     expect(workItemOf('page#2345 then #1234', false)).toBe('1234')
+    expect(workItemOf('fixes ab#1234', false)).toBe('1234')
+    expect(workItemOf('continue on WI#1234', false)).toBe(null)
+    expect(workItemOf('see https://en.wikipedia.org/wiki/Foo_(bar)#1234', false)).toBe(null)
+    expect(workItemOf('https://x/page-#1234', true)).toBe(null)
+    expect(workItemOf('fix owner/repo#1234', false)).toBe('1234')
+    expect(workItemOf('o/r#1234 medium', true)).toBe('1234')
+    expect(workItemOf('see https://github.com/o/r#1234', false)).toBe(null)
   })
 
   test('only delivery and orchestrate skills read a bare number as the work item', async () => {

@@ -422,8 +422,9 @@ export function skillWorkItem(name: string, args: string, depth = 0): string | n
 // taken for a year unless it opens the args ("/deliver 2045"). "#2026" on its
 // own still counts: it names an item. An Azure DevOps work item URL in skill
 // args gives its id, like a GitHub issue URL.
-// A "#" in a URL or glued to a word ("page#2345") is no item, but Azure
-// Boards' "AB#1234", which links commits and PRs to work items, is.
+// A "#" in a URL or glued to a word ("page#2345", "WI#2345") is no item,
+// but Azure Boards' "AB#1234", which links commits and PRs to work items,
+// and a GitHub "owner/repo#1234" are.
 const DATE = /^(?:(?:19|20)\d\d(?:[-/.]\d{1,2}){1,2}|(?:\d{1,2}[-/.]){1,2}(?:19|20)\d\d)$/
 
 export function workItemOf(text: string, allowBare: boolean): string | null {
@@ -431,7 +432,7 @@ export function workItemOf(text: string, allowBare: boolean): string | null {
     ? text.match(/https:\/\/(?:github\.com\/[\w.-]+\/[\w.-]+\/issues|\S+\/_workitems\/edit)\/(\d{1,7})\b/i)
     : null
   if (url?.[1]) return url[1]
-  for (const m of text.matchAll(/(?<![\w/])(?:AB)?#(\d{3,7}(?:[-/.]\d+)*)(?!\w)/g)) {
+  for (const m of text.matchAll(/(?<!:\/\/\S*)(?:(?<![\w/])(?:[Aa][Bb])?|(?<!\S)[\w.-]+\/[\w.-]+)#(\d{3,7}(?:[-/.]\d+)*)(?!\w)/g)) {
     const run = m[1] ?? ''
     if (!DATE.test(run)) return run.split(/[-/.]/)[0] ?? null
   }
