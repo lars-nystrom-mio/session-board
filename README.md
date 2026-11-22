@@ -254,8 +254,9 @@ local midnight, ended ones included, how many sessions are active and how many
 need you. Hover the cost for the split per project. A session counts only what
 it spent today, from the cost it had when the day began. A status file written
 by an older version of the hooks has no such baseline: it counts whole if the
-session started today, and not at all otherwise, which a `+` after the cost
-and the hover text point out.
+session started today, and not at all otherwise. Sessions in a sandbox never
+count, since their status files can claim anything. A `+` after the cost and
+the hover text point out sessions left out.
 
 ### Desktop notifications
 

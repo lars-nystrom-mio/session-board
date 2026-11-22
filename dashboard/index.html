@@ -949,13 +949,15 @@ const localDay = (t) => {
 // at its first cost refresh of each local day (costDayOf in hooks/lib.ts). A
 // file without one, from hooks older than that, counts whole if the session
 // started today and not at all otherwise (`uncounted`). Ended sessions count.
+// Sandboxed files are left out (`boxed`): they could claim any cost.
 function todayCost(now) {
   const day = localDay(now)
   const midnight = new Date(now).setHours(0, 0, 0, 0)
   const byProject = new Map()
-  let total = 0, uncounted = 0
+  let total = 0, uncounted = 0, boxed = 0
   for (const s of sessions) {
     if (typeof s.costUsd !== 'number' || s.updatedAt < midnight) continue
+    if (s.sandboxed) { boxed++; continue }
     let usd
     if (s.costDay && typeof s.costDay.usd === 'number') usd = s.costDay.day === day ? s.costUsd - s.costDay.usd : 0
     else if (s.startedAt >= midnight) usd = s.costUsd
@@ -966,22 +968,24 @@ function todayCost(now) {
     const p = projectOf(s)
     byProject.set(p, (byProject.get(p) || 0) + usd)
   }
-  return { total, byProject, uncounted }
+  return { total, byProject, uncounted, boxed }
 }
 
 function renderToday(now, active) {
-  const { total, byProject, uncounted } = todayCost(now)
+  const { total, byProject, uncounted, boxed } = todayCost(now)
   const waiting = countIn(active, 'waiting')
   const usd = (n) => '$' + n.toFixed(2)
   const split = [...byProject].sort((a, b) => b[1] - a[1] || byName(a[0], b[0])).map(([p, n]) => `${p}  ${usd(n)}`)
   const title = [
     split.length ? 'By project:' : 'Nothing spent yet today.',
     ...split,
-    ...(uncounted ? ['', `${uncounted} session${uncounted === 1 ? '' : 's'} from before today with no day baseline (older hooks) not counted.`] : []),
+    ...(uncounted || boxed ? [''] : []),
+    ...(uncounted ? [`${uncounted} session${uncounted === 1 ? '' : 's'} from before today with no day baseline (older hooks) not counted.`] : []),
+    ...(boxed ? [`${boxed} sandboxed session${boxed === 1 ? '' : 's'} not counted: ${boxed === 1 ? 'its' : 'their'} cost can't be trusted.`] : []),
   ].join('\n')
   const sep = '<span class="sep">·</span>'
   const html = `<span class="k">today</span>
-    <span class="cost" tabindex="0" title="${esc(title)}"><b>${usd(total)}</b>${uncounted ? '+' : ''}</span>${sep}
+    <span class="cost" tabindex="0" title="${esc(title)}"><b>${usd(total)}</b>${uncounted || boxed ? '+' : ''}</span>${sep}
     <span class="${active.length ? '' : 'zero'}"><b>${active.length}</b> active</span>${sep}
     <span class="you${waiting ? '' : ' zero'}"><b>${waiting}</b> ${waiting === 1 ? 'needs you' : 'need you'}</span>`
   const el = $('today')

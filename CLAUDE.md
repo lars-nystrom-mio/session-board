@@ -33,7 +33,10 @@ install it and how to serve the page. This file is for working on it.
   The strip above the tiles (`renderToday`) sums today's cost: `costUsd` is a
   running total, so each session counts `costUsd - costDay.usd` when `costDay`
   (set by `costDayOf` in `lib.ts` at the first cost refresh of each local day)
-  is today's; a file without `costDay` counts whole only if it started today. It shows the
+  is today's; a file without `costDay` counts whole only if it started today.
+  Sandboxed files never count. A board made fresh after `/clear` or a resume
+  keeps the ended board's `costUsd` and `costDay`, and a total that drops
+  counts as a reset. It shows the
   **queue** form and list only when `GET api/queue` answers, so it still works
   under `python -m http.server`. It also lists `sandboxed/`, status files that
   sessions in a sandbox write through a mount. Those are untrusted: `defang()`
@@ -202,8 +205,7 @@ SESSION_BOARD_DIR=<scratch dir> claude -p --plugin-dir . --model haiku "<prompt 
 ## Not verified yet
 
 - Whether a resumed session's `costUsd` restarts at 0 or carries the earlier
-  cost. `costDayOf` starts a session that started today from 0, so a carried
-  total would count the earlier cost as today's.
+  cost. `costDayOf` handles either, as long as the ended status file is there.
 - An actual start from the queue: the Windows Terminal tab, that
   `--session-id` gives the status file the name the queue waits for, and that
   a delivery run calls `board_status` at its end without being told to.

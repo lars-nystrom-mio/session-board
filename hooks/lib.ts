@@ -133,13 +133,18 @@ export function localDay(t: number): string {
 // stood at its last refresh, at most 30 s before midnight. A session with no
 // baseline yet starts from 0 if it started today (a fresh session), otherwise
 // (a file from before costDay existed) from now. A total that went down was
-// reset, so it counts from 0.
+// reset: on the same day the baseline goes below 0 by what was already spent
+// today, so that spend still counts; on a new day it counts from 0.
 export function costDayOf(prev: CostDay | null | undefined, before: number | null, usd: number | null, startedAt: number, now: number): CostDay | null {
   if (usd === null) return prev ?? null
   const day = localDay(now)
-  if (prev && prev.day === day) return usd < prev.usd ? { day, usd: 0 } : prev
-  const base = prev ? (before ?? usd) : localDay(startedAt) === day ? 0 : usd
-  return { day, usd: Math.min(base, usd) }
+  const reset = before !== null && usd < before
+  if (prev && prev.day === day) {
+    if (reset) return { day, usd: prev.usd - before }
+    return usd < prev.usd ? { day, usd: 0 } : prev
+  }
+  if (!prev) return { day, usd: localDay(startedAt) === day ? 0 : usd }
+  return { day, usd: reset ? 0 : Math.min(before ?? usd, usd) }
 }
 
 // What a board_status call reported, cleaned by progressOf. Each report

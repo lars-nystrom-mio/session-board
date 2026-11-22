@@ -729,6 +729,10 @@ describe('cost per day', () => {
     const today = { day: '2026-11-22', usd: 2 }
     expect(costDayOf(today, 4, null, at(21, 9), at(22, 18))).toBe(today)
     expect(costDayOf(null, null, null, at(22, 9), at(22, 18))).toBe(null)
-    expect(costDayOf(today, 4, 1, at(21, 9), at(22, 18))).toEqual({ day: '2026-11-22', usd: 0 })
+    // $2 spent today before the reset still counts: 1 - (-2) = 3.
+    expect(costDayOf(today, 4, 1, at(21, 9), at(22, 18))).toEqual({ day: '2026-11-22', usd: -2 })
+    expect(costDayOf(today, null, 1, at(21, 9), at(22, 18))).toEqual({ day: '2026-11-22', usd: 0 })
+    // Reset across midnight: everything since counts.
+    expect(costDayOf({ day: '2026-11-21', usd: 0 }, 8, 0.5, at(21, 9), at(22, 0, 1))).toEqual({ day: '2026-11-22', usd: 0 })
   })
 })

@@ -334,6 +334,12 @@ async function init($: EngineInterface, cwd: string, interactive: boolean, reaso
   } catch {}
 
   board = previous && previous.state !== 'ended' ? previous : freshBoard(id, cwd, now())
+  // After /clear (or a resume) the process's cost can carry on from the ended
+  // board, so its day baseline carries on too, or today would count it all.
+  if (previous && board !== previous) {
+    board.costUsd = previous.costUsd ?? null
+    board.costDay = previous.costDay ?? null
+  }
   board.cwd = cwd
   board.interactive = interactive
   board.tools = []
