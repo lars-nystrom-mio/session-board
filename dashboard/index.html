@@ -1340,11 +1340,12 @@ const toolLimit = (t) => Object.hasOwn(TOOL_LIMIT_MS, t.tool) ? TOOL_LIMIT_MS[t.
 const AGENT_TOOLS = new Set(['Agent', 'Task', 'Workflow'])
 const newest = (list, key) => list?.reduce((m, x) => Math.max(m, x?.[key] ?? 0), 0) ?? 0
 
-// Not everything a session does leaves a time in its file: a tool that ends,
-// or a Read or Grep, which writes no event, just drops out of `tools`, and a
+// Not everything a session does leaves a time in its file: a tool that ends, or
+// a Read or Grep, which writes no event, just drops out of `tools`, and a
 // streamed answer only moves `lastStepAt` on. So the page also notes when it
-// last saw a session's file change in anything but its heartbeat. It starts counting when the page first sees the session: the
-// file's own times can't say whether a tool just ended.
+// last saw a session's file change in anything but its heartbeat. It starts
+// counting when the page first sees the session: the file's own times can't say
+// whether a tool just ended.
 const seen = new Map()  // sessionId -> { sig, at }
 function noteActivity(s, now) {
   const sig = JSON.stringify([s.state, s.turns, s.tools.map((t) => t.id), s.events.length, s.events.at(-1)?.t,

@@ -174,8 +174,7 @@ SESSION_BOARD_DIR=<scratch dir> claude -p --plugin-dir . --model haiku "<prompt 
 - In tests, a hook that answers `tool.call` returns `{ result }`.
 - `turn.step` streams: its hook and its `.catch` handler are both
   `async function*`, and forward the stream with `yield* next(e)`, or
-  through `streamed()` in `lib.ts`, which forwards it the same way and
-  notes each chunk.
+  through `streamed()` in `lib.ts`, which forwards it and notes each chunk.
 
 ## What the events look like in practice
 

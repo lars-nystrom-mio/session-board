@@ -158,9 +158,11 @@ export function stepSeen(b: Board, agentId: string | undefined, t: number): void
   b.lastStepAt = t
 }
 
-// Forwards a model stream as yield* would, calling `seen` as each chunk
-// arrives: values sent in and errors thrown in reach the source, and closing
-// early closes it. A failing `seen` never stops the stream.
+// Forwards a model stream, calling `seen` as each chunk arrives. Values sent
+// in and errors thrown in reach the source, and closing early closes it, but
+// unlike yield* the source's return value on an early close is dropped, and a
+// thenable chunk would be awaited (model chunks are plain objects). A failing
+// `seen` never stops the stream.
 export async function* streamed<T, R>(source: AsyncGenerator<T, R, unknown>, seen: () => void): AsyncGenerator<T, R, unknown> {
   let finished = false
   try {

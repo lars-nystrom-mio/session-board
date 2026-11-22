@@ -446,6 +446,15 @@ describe('model steps', () => {
     await closed.next()
     await closed.return(undefined as never)
     expect(got).toEqual(['closed'])
+
+    async function* failing() {
+      yield 1
+      throw new Error('network')
+    }
+    const failed = streamed(failing(), () => {})
+    expect(await failed.next()).toEqual({ value: 1, done: false })
+    await expect(failed.next()).rejects.toThrow('network')
+    expect(await failed.next()).toEqual({ value: undefined, done: true })
   })
 })
 
