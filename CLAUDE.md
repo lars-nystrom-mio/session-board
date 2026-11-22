@@ -71,7 +71,8 @@ install it and how to serve the page. This file is for working on it.
   names no work item), and `/loop 5m /deliver 1234` gives its inner
   command's (`skillWorkItem`). A number inside a date or a word (`2026-10-31`,
   `orch-2024`) never counts, nor a bare 1900–2099 (a year) unless it opens
-  the args. Plan items name work items by number alone, so two repos' `#12` in one plan are the same row. The
+  the args, nor a card or phone number (`1234-5678-9012`,
+  `1234 5678 9012 3456`). Plan items name work items by number alone, so two repos' `#12` in one plan are the same row. The
   board starts nothing from a plan.
 - `server/serve.py`: optional stdlib server for the board folder, but `/`
   comes from `dashboard/index.html` in the repo. It turns off `SO_REUSEADDR` on

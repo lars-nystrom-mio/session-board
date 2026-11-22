@@ -114,6 +114,27 @@ describe('summaries', () => {
     expect(workItemOf('build 1.2.12345', true)).toBe(null)
     expect(workItemOf('2026-1-12345', true)).toBe(null)
   })
+
+  test('card and phone numbers are not work items', async () => {
+    expect(workItemOf('1234-5678-9012', true)).toBe(null)
+    expect(workItemOf('card 1234-5678-9012-3456 then 25229', true)).toBe('25229')
+    expect(workItemOf('1234 5678 9012 3456', true)).toBe(null)
+    expect(workItemOf('call 1234 56789012', true)).toBe(null)
+    expect(workItemOf('1234-56789012', true)).toBe(null)
+    expect(workItemOf('#1234-5678-9012', false)).toBe(null)
+    expect(workItemOf('#1234-5678-9012 and #25229', false)).toBe('25229')
+    // Pairs of items and spaced lists of longer ids still count.
+    expect(workItemOf('25229-25231', true)).toBe('25229')
+    expect(workItemOf('25229 25230', true)).toBe('25229')
+    expect(workItemOf('30395 30396 30397', true)).toBe('30395')
+    expect(workItemOf('1234 5678', true)).toBe('1234')
+    expect(workItemOf('2026-10-31 25229', true)).toBe('25229')
+    // A long spaced run stays cheap.
+    const digits = '1 '.repeat(50_000)
+    const start = Date.now()
+    expect(workItemOf(`${digits}x`, true)).toBe(null)
+    expect(Date.now() - start).toBeLessThan(500)
+  })
 })
 
 describe('pull requests', () => {
