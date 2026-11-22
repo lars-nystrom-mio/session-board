@@ -449,28 +449,38 @@ function hashRef(text: string, index: number): boolean {
   return !token.includes('://') && HASH_PREFIX.test(token)
 }
 
-// A card or phone number gives no item, though a group of it looks like one:
-// three or more groups in a row of at most four digits, joined by "-" or a
-// space, with a "-" among them ("1234-5678-9012", "08-1234 5678"), a group
-// shorter than four ("555 123 4567") or four groups or more ("1234 5678 9012
+// A card or phone number gives no item, though a group of it looks like one.
+// Looked at are three or more groups in a row of at most four digits, joined
+// by up to three of "-" or spaces, where a date ("2026-10-31") ends the row.
+// They are a number with a "-" among them ("1234-5678-9012", "08-1234 5678"),
+// when they open with a shorter group and end with one of four ("555 123
+// 4567", "+46 8 1234 5678"), or as four groups of four ("1234 5678 9012
 // 3456"). An item beside one still counts ("1234 5678 9012 3456 25229"), and
 // so do pairs and lists of items ("25229-25231", "30395-30396-30397",
-// "4512 4513 4514"). Gives where each group of such a number starts.
+// "4512 4513 4514", "4512 2 3"), but four 4-digit items in a row read as a
+// card, and three joined by "-" as a phone number.
+// Gives where each group of such a number starts.
 function phoneGroups(text: string): Set<number> {
   const found = new Set<number>()
-  for (const m of text.matchAll(/(?<![\w/.-])\d+(?:[- \t\u00a0]\d+)+/g)) {
-    const groups = [...m[0].matchAll(/\d+/g)].map((g) => ({ at: m.index + g.index, end: m.index + g.index + g[0].length }))
+  for (const m of text.matchAll(/(?<![\w/.-])\d+(?:[- \t\u00a0]{1,3}\d+)+/g)) {
+    const groups: { at: number; len: number; date: boolean }[] = []
+    for (const token of m[0].matchAll(/[^ \t\u00a0]+/g)) {
+      const date = DATE.test(token[0])
+      for (const g of token[0].matchAll(/\d+/g))
+        groups.push({ at: m.index + token.index + g.index, len: g[0].length, date })
+    }
     let from = 0
     for (let i = 0; i <= groups.length; i++) {
       const group = groups[i]
-      if (group && group.end - group.at <= 4) continue
-      const short = groups.slice(from, i)
-      const head = short[0]
-      const tail = short[short.length - 1]
-      if (head && tail && short.length >= 3) {
-        const joined = text.slice(head.at, tail.end)
-        if (joined.includes('-') || short.length >= 4 || short.some((g) => g.end - g.at < 4))
-          for (const g of short) found.add(g.at)
+      if (group && group.len <= 4 && !group.date) continue
+      const row = groups.slice(from, i)
+      const head = row[0]
+      const tail = row[row.length - 1]
+      if (head && tail && row.length >= 3) {
+        const dashed = text.slice(head.at, tail.at + tail.len).includes('-')
+        const phone = head.len < 4 && tail.len === 4
+        const card = row.length === 4 && row.every((g) => g.len === 4)
+        if (dashed || phone || card) for (const g of row) found.add(g.at)
       }
       from = i + 1
     }
