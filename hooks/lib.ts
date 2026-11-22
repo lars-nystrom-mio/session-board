@@ -439,10 +439,6 @@ export function skillWorkItem(name: string, args: string, depth = 0): string | n
 // can't be told from owner/repo, so it counts too.
 // What may come right before a "#": nothing, or a character that can't be in
 // a word, path or URL, then "AB" or a GitHub owner (no dots) and repo.
-// A card or phone number ("1234-5678-9012", "1234 5678 9012 3456",
-// "1234 56789012") is none either, though its first group looks like one. A
-// pair of items ("25229-25231", "25229 25230") still counts, and so does a
-// spaced list of ids that aren't all four digits ("30395 30396 30397").
 const HASH_PREFIX = /^(?:[\s\S]*[^\w/.:-])?(?:[Aa][Bb]|[\w-]+\/[\w.-]+)?$/
 
 // Whether the "#" at index starts a reference: the run of non-space text
@@ -453,23 +449,33 @@ function hashRef(text: string, index: number): boolean {
   return !token.includes('://') && HASH_PREFIX.test(token)
 }
 
-// Whether a run of digit groups joined by "-" (and maybe "/" or ".") is
-// longer than a pair of items, or has a group longer than any item.
-function longDashRun(run: string): boolean {
-  const groups = run.split('-')
-  return groups.length > 2 || (groups.length > 1 && groups.some((g) => /\d{8}/.test(g)))
-}
-
-// Where the text has digit groups joined by spaces that make a card or phone
-// number: a group longer than any item, or three or more groups of four.
-function spacedNumbers(text: string): [number, number][] {
-  const spans: [number, number][] = []
-  for (const m of text.matchAll(/(?<![\w/.#-])\d+(?: \d+)+/g)) {
-    const groups = m[0].split(' ')
-    if (groups.some((g) => g.length > 7) || (groups.length > 2 && groups.every((g) => g.length === 4)))
-      spans.push([m.index, m.index + m[0].length])
+// A card or phone number gives no item, though a group of it looks like one:
+// three or more groups in a row of at most four digits, joined by "-" or a
+// space, with a "-" among them ("1234-5678-9012", "08-1234 5678"), a group
+// shorter than four ("555 123 4567") or four groups or more ("1234 5678 9012
+// 3456"). An item beside one still counts ("1234 5678 9012 3456 25229"), and
+// so do pairs and lists of items ("25229-25231", "30395-30396-30397",
+// "4512 4513 4514"). Gives where each group of such a number starts.
+function phoneGroups(text: string): Set<number> {
+  const found = new Set<number>()
+  for (const m of text.matchAll(/(?<![\w/.-])\d+(?:[- \t\u00a0]\d+)+/g)) {
+    const groups = [...m[0].matchAll(/\d+/g)].map((g) => ({ at: m.index + g.index, end: m.index + g.index + g[0].length }))
+    let from = 0
+    for (let i = 0; i <= groups.length; i++) {
+      const group = groups[i]
+      if (group && group.end - group.at <= 4) continue
+      const short = groups.slice(from, i)
+      const head = short[0]
+      const tail = short[short.length - 1]
+      if (head && tail && short.length >= 3) {
+        const joined = text.slice(head.at, tail.end)
+        if (joined.includes('-') || short.length >= 4 || short.some((g) => g.end - g.at < 4))
+          for (const g of short) found.add(g.at)
+      }
+      from = i + 1
+    }
   }
-  return spans
+  return found
 }
 
 const DATE = /^(?:(?:19|20)\d\d(?:[-/.]\d{1,2}){1,2}|(?:\d{1,2}[-/.]){1,2}(?:19|20)\d\d)$/
@@ -479,20 +485,21 @@ export function workItemOf(text: string, allowBare: boolean): string | null {
     ? text.match(/https:\/\/(?:github\.com\/[\w.-]+\/[\w.-]+\/issues|\S+\/_workitems\/edit)\/(\d{1,7})\b/i)
     : null
   if (url?.[1]) return url[1]
+  const phone = phoneGroups(text)
   for (const m of text.matchAll(/#(\d{3,7}(?:[-/.]\d+)*)(?!\w)/g)) {
     const run = m[1] ?? ''
-    if (hashRef(text, m.index) && !DATE.test(run) && !longDashRun(run)) return run.split(/[-/.]/)[0] ?? null
+    const parts = run.split(/[-/.]/)
+    if (!hashRef(text, m.index) || DATE.test(run) || phone.has(m.index + 1) || parts.some((p) => p.length > 7)) continue
+    return parts[0] ?? null
   }
   if (!allowBare) return null
   const first = text.search(/\S/)
-  const spaced = spacedNumbers(text)
   for (const m of text.matchAll(/(?<![\w/.#-])(\d+(?:[-/.]\d+)*)(?!\w)/g)) {
     // A list or range of items ("25229/25230") gives its first; a run with a
     // shorter part is a version, decimal or date, never an item.
     const run = m[1] ?? ''
     const parts = run.split(/[-/.]/)
-    if (DATE.test(run) || longDashRun(run) || parts.some((p) => p.length < 4 || p.length > 7)) continue
-    if (spaced.some(([from, to]) => m.index >= from && m.index < to)) continue
+    if (DATE.test(run) || phone.has(m.index) || parts.some((p) => p.length < 4 || p.length > 7)) continue
     for (const [i, part] of parts.entries()) {
       const year = part.length === 4 && Number(part) >= 1900 && Number(part) <= 2099
       if (!year || (m.index === first && i === 0)) return part

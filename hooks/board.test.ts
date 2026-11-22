@@ -119,21 +119,33 @@ describe('summaries', () => {
     expect(workItemOf('1234-5678-9012', true)).toBe(null)
     expect(workItemOf('card 1234-5678-9012-3456 then 25229', true)).toBe('25229')
     expect(workItemOf('1234 5678 9012 3456', true)).toBe(null)
-    expect(workItemOf('call 1234 56789012', true)).toBe(null)
+    expect(workItemOf('1234\u00a05678\u00a09012\u00a03456', true)).toBe(null)
+    expect(workItemOf('1234 5678 9012 3456 25229', true)).toBe('25229')
+    expect(workItemOf('call 555 123 4567', true)).toBe(null)
+    expect(workItemOf('+46 8 1234 5678', true)).toBe(null)
+    expect(workItemOf('08-1234 5678', true)).toBe(null)
     expect(workItemOf('1234-56789012', true)).toBe(null)
     expect(workItemOf('#1234-5678-9012', false)).toBe(null)
+    expect(workItemOf('#1234 5678 9012 3456', false)).toBe(null)
+    expect(workItemOf('#1234-56789012', false)).toBe(null)
     expect(workItemOf('#1234-5678-9012 and #25229', false)).toBe('25229')
-    // Pairs of items and spaced lists of longer ids still count.
+    // Pairs and lists of items still count.
     expect(workItemOf('25229-25231', true)).toBe('25229')
     expect(workItemOf('25229 25230', true)).toBe('25229')
     expect(workItemOf('30395 30396 30397', true)).toBe('30395')
+    expect(workItemOf('30395-30396-30397', true)).toBe('30395')
+    expect(workItemOf('#30395-30396-30397', false)).toBe('30395')
+    expect(workItemOf('4512 4513 4514', true)).toBe('4512')
     expect(workItemOf('1234 5678', true)).toBe('1234')
     expect(workItemOf('2026-10-31 25229', true)).toBe('25229')
-    // A long spaced run stays cheap.
-    const digits = '1 '.repeat(50_000)
-    const start = Date.now()
-    expect(workItemOf(`${digits}x`, true)).toBe(null)
-    expect(Date.now() - start).toBeLessThan(500)
+    expect(workItemOf('25229 3 times', true)).toBe('25229')
+    expect(workItemOf('25229 20261122', true)).toBe('25229')
+    // Long runs stay cheap.
+    for (const text of [`${'1 '.repeat(50_000)}x`, '1234 5678 9012 3456, '.repeat(10_000)]) {
+      const start = Date.now()
+      expect(workItemOf(text, true)).toBe(null)
+      expect(Date.now() - start).toBeLessThan(500)
+    }
   })
 })
 
