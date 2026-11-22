@@ -756,9 +756,13 @@ export const register: Register = (on) => {
   }).catch(($, e, next) => next(e)) // the board only observes: on failure the call goes on
 
   on('tool.call', async ($, e, next) => {
-    if (e.tool === boardTool) return { result: await boardStatusCalled($, e as unknown as Record<string, unknown>) }
-    if (e.tool === queueTool) return { result: await boardQueueCalled($, e as unknown as Record<string, unknown>) }
-    if (e.tool === planTool) return { result: await boardPlanCalled($, e as unknown as Record<string, unknown>) }
+    if (e.tool === boardTool || e.tool === queueTool || e.tool === planTool) {
+      const input = e as unknown as Record<string, unknown>
+      const result = e.tool === boardTool ? await boardStatusCalled($, input)
+        : e.tool === queueTool ? await boardQueueCalled($, input) : await boardPlanCalled($, input)
+      if (board) toolEndSeen(board, e.agentId, now()) // the heartbeat writes it
+      return { result }
+    }
     const rec = await toolStarted($, e.tool, e as unknown as Record<string, unknown>, e.tool_use_id, e.agentId)
     if (!rec) return next(e)
     let outcome: 'ok' | 'denied' | 'failed' = 'failed'

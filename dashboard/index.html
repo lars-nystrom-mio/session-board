@@ -1353,7 +1353,8 @@ const newest = (list, key) => list?.reduce((m, x) => Math.max(m, x?.[key] ?? 0),
 const seen = new Map()  // sessionId -> { sig, at }
 function lastActive(s, now) {
   if (!('lastToolEnd' in s) || s.tools.some((t) => !t.agentId && AGENT_TOOLS.has(t.tool))) return now
-  const t = Math.max(...[s.lastToolEnd, s.lastStepAt, s.promptAt, s.stateSince, newest(s.events, 't'), newest(s.messages, 't')]
+  const t = Math.max(...[s.lastToolEnd, s.lastStepAt, s.promptAt, s.stateSince, newest(s.events, 't'), newest(s.messages, 't'),
+    newest(s.agents, 'since'), newest(s.agents, 'endedAt'), newest(s.shells, 'since'), newest(s.crons, 'firedAt'), s.skill?.at, s.done?.at]
     .map((v) => Number.isFinite(v) ? v : 0))
   return t > 0 ? Math.min(t, now) : now
 }
@@ -1770,7 +1771,8 @@ function render() {
   const now = Date.now()
   for (const s of sessions) noteActivity(s, now)
   stalls = new Map(sessions.map((s) => [s.sessionId, stallOf(s, now)]))
-  for (const id of seen.keys()) if (!stalls.has(id)) seen.delete(id)
+  // A session missing from one poll (a file read mid-write) keeps its count.
+  for (const [id, v] of seen) if (!stalls.has(id) && now - v.at > 60 * 60_000) seen.delete(id)
   const active = sessions.filter((s) => s.state !== 'ended' && !isStale(s))
   const past = sessions.filter((s) => (s.state === 'ended' || isStale(s)) && now - s.updatedAt < HIDE_AFTER_MS)
   // Never sort on heartbeats or busy/idle: they change every few seconds and
