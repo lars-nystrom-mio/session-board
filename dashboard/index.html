@@ -680,6 +680,7 @@
       <span id="notify-blocked" hidden title="this browser blocks notifications from the board: allow them in its site settings">blocked</span>
       <button type="button" id="notify-mute" aria-pressed="false" hidden title="no desktop notifications for now">mute</button>
       <button type="button" id="notify-long" aria-pressed="false" hidden title="also notify when a turn that ran 3 minutes or longer ends">long turns</button>
+      <button type="button" id="notify-stall" aria-pressed="false" hidden title="also notify when a running session starts to look stalled">stalls</button>
     </div>
   </div>
   <div class="ram-break"></div>
@@ -2100,6 +2101,7 @@ document.addEventListener('click', async (e) => {
   if (e.target.closest('#notify-ask')) return void Notification.requestPermission().then(renderNotify, renderNotify)
   if (e.target.closest('#notify-mute')) return setNotify('notifyMute', notifyMute = !notifyMute)
   if (e.target.closest('#notify-long')) return setNotify('notifyLong', notifyLong = !notifyLong)
+  if (e.target.closest('#notify-stall')) return setNotify('notifyStall', notifyStall = !notifyStall)
   const tile = e.target.closest('[data-session]')
   if (tile) return openDrawer(tile.dataset.session)
   if (e.target.closest('[data-close]')) closeDrawer()
@@ -2313,12 +2315,15 @@ const LONG_TURN_MS = 3 * 60_000
 const NOTIFY_OK = 'Notification' in window && window.isSecureContext
 let notifyMute = false
 let notifyLong = false
+let notifyStall = false  // off by default: the stall limits are guesses
 try {
   notifyMute = !!localStorage.getItem('sessionBoard.notifyMute')
   notifyLong = !!localStorage.getItem('sessionBoard.notifyLong')
+  notifyStall = !!localStorage.getItem('sessionBoard.notifyStall')
 } catch {}
 const waitNoted = new Map()  // sessionId -> waiting.since last notified
 const stateWas = new Map()   // sessionId -> its state at the previous poll
+const stallWas = new Map()   // sessionId -> whether it looked stalled at the previous poll
 const turns = new Map()      // sessionId -> { n, ms, from }: turn number, working time so far, open stretch
 const lastSeen = new Map()   // sessionId -> when a poll last listed it
 const FORGET_MS = 60_000     // a file can miss a poll (read mid-write): keep what we know this long
@@ -2331,9 +2336,10 @@ function renderNotify() {
   const perm = Notification.permission
   $('notify-ask').hidden = perm !== 'default'
   $('notify-blocked').hidden = perm !== 'denied'
-  $('notify-mute').hidden = $('notify-long').hidden = perm !== 'granted'
+  $('notify-mute').hidden = $('notify-long').hidden = $('notify-stall').hidden = perm !== 'granted'
   $('notify-mute').setAttribute('aria-pressed', String(notifyMute))
   $('notify-long').setAttribute('aria-pressed', String(notifyLong))
+  $('notify-stall').setAttribute('aria-pressed', String(notifyStall))
 }
 
 function setNotify(key, on) {
@@ -2347,7 +2353,7 @@ function noteTransitions(list, now) {
   for (const s of list) lastSeen.set(s.sessionId, now)
   for (const [id, at] of lastSeen) {
     if (now - at <= FORGET_MS) continue
-    for (const m of [lastSeen, waitNoted, stateWas, turns]) m.delete(id)
+    for (const m of [lastSeen, waitNoted, stateWas, stallWas, turns]) m.delete(id)
   }
   for (const s of list) {
     if (s.sandboxed) continue
@@ -2367,6 +2373,13 @@ function noteTransitions(list, now) {
       }
     }
     noteTurn(s, now)
+    // A stall the page saw begin, from `stalls` as this poll's render worked
+    // it out. Sessions already stalled when the page first lists them stay
+    // quiet, and one stall notifies once however long it lasts.
+    const stall = stalls.get(id)
+    const stallBefore = stallWas.get(id)
+    stallWas.set(id, !!stall)
+    if (stall && stallBefore === false && notifyStall) notify(s, 'stall', now - stall.since, stall)
   }
   notifyPrimed = true
 }
@@ -2400,18 +2413,20 @@ function noteTurn(s, now) {
   }
 }
 
-function notify(s, kind, took = 0) {
+function notify(s, kind, took = 0, stall = null) {
   if (!NOTIFY_OK || notifyMute || Notification.permission !== 'granted') return
   const name = [projectOf(s), s.tabTitle].filter(Boolean).join(' · ')
   const what = s.workItem ? `#${s.workItem}` : s.prompt ? firstSentence(s.prompt) : ''
-  const title = kind === 'waiting' ? `Needs you: ${name}` : `Turn ended: ${name}`
+  const title = { waiting: `Needs you: ${name}`, stall: `Looks stalled: ${name}` }[kind] || `Turn ended: ${name}`
   const reason = { question: 'Has a question', plan: 'Plan to approve' }[s.waiting?.kind] || 'Waiting for you'
   const body = kind === 'waiting'
     ? (s.waiting.detail ? `${reason}: ${s.waiting.detail}` : reason)
-    : [`Ran ${dur(took)}`, what].filter(Boolean).join(' · ')
+    : kind === 'stall'
+      ? [stall.tool ? `${stall.tool.tool} running for ${dur(took)}` : `Quiet for ${dur(took)}`, what].filter(Boolean).join(' · ')
+      : [`Ran ${dur(took)}`, what].filter(Boolean).join(' · ')
   try {
     // The tag keeps two open boards from showing the same notification twice.
-    const n = new Notification(title, { body: body.slice(0, 240), tag: `${s.sessionId}:${kind}:${s.stateSince}` })
+    const n = new Notification(title, { body: body.slice(0, 240), tag: `${s.sessionId}:${kind}:${stall ? stall.since : s.stateSince}` })
     n.onclick = () => {
       window.focus()
       n.close()

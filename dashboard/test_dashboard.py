@@ -574,6 +574,51 @@ class MessagesView(unittest.TestCase):
         self.assertEqual(note['title'], 'Turn ended: pipelines · build ends')
         self.assertRegex(note['body'], r'^Ran 15m( \d\ds)? · Fix the thing\.$')
 
+    def test_a_stall_notifies_only_when_asked_for_and_once(self):
+        # Off by default: S3's build runs past its limit without a notification.
+        self.notify_page()
+        self.assertEqual(self.page.get_attribute('#notify-stall', 'aria-pressed'), 'false')
+        now = int(time.time() * 1000)
+        self.rewrite(S3, tools=[{'id': 't3', 'tool': 'Bash', 'summary': 'dotnet build', 'since': now - 25 * MIN}])
+        self.page.wait_for_function(f'''document.querySelector('.tile[data-session="{S3}"]').classList.contains('stalled')''')
+        self.page.wait_for_timeout(500)
+        self.assertEqual(self.notes(), [])
+        # Turned on: S6's test run goes past its limit and notifies once. S1 and
+        # S3, stalled before, stay quiet.
+        self.page.click('#notify-stall')
+        self.assertEqual(self.page.get_attribute('#notify-stall', 'aria-pressed'), 'true')
+        self.assertEqual(self.page.evaluate("localStorage.getItem('sessionBoard.notifyStall')"), '1')
+        self.rewrite(S6, tabTitle='tests', tools=[{'id': 't6', 'tool': 'REPL', 'summary': 'npm test', 'since': now - 22 * MIN}])
+        self.page.wait_for_function('notes.length > 0')
+        self.page.wait_for_timeout(2500)  # another poll: still one
+        [note] = self.notes()
+        self.assertEqual(note['title'], 'Looks stalled: pipelines · tests')
+        self.assertRegex(note['body'], r'^REPL running for 22m \d\ds · Fix the thing\.$')
+        self.page.evaluate('notes[0].onclick()')
+        self.settled()
+        self.assertTrue(self.page.evaluate('notes[0].closed'))
+        self.assertIn('looks stalled: REPL has run longer than 20 min', self.page.inner_text('#d-body'))
+
+    def test_a_quiet_stall_says_how_long(self):
+        # S2 has nothing in flight; the page counts from when it saw the file
+        # change, and notifies once it has been quiet past the limit.
+        self.page.close()
+        self.page = self.browser.new_page(viewport={'width': 1400, 'height': 1000})
+        self.page.on('pageerror', lambda e: self.errors.append(str(e)))
+        self.page.add_init_script("localStorage.setItem('test.perm', 'granted'); localStorage.setItem('sessionBoard.notifyStall', '1')")
+        self.page.add_init_script(self.STUB)
+        self.page.clock.install()
+        self.page.goto(self.url)
+        self.page.wait_for_selector(f'[data-session="{S2}"]')
+        self.page.wait_for_timeout(300)
+        self.assertEqual(self.notes(), [])
+        self.page.clock.run_for(11 * MIN + 2_000)
+        self.page.wait_for_function('notes.some((n) => n.title.endsWith("gone quiet"))')
+        titles = [n['title'] for n in self.notes()]
+        self.assertEqual(titles.count('Looks stalled: pipelines · gone quiet'), 1)
+        body = next(n['body'] for n in self.notes() if n['title'].endswith('gone quiet'))
+        self.assertRegex(body, r'^Quiet for 1[01]m \d\ds · Fix the thing\.$')
+
     def test_a_sandboxed_session_never_notifies(self):
         self.notify_page()
         path = Path(self.dir.name) / 'sandboxed' / f'{X}.json'

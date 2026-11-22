@@ -268,8 +268,12 @@ approve, with its text). Clicking it brings the board forward with that
 session's drawer open. It notifies once per wait (a plan's gate counts as one
 wait however many short turns run while it's open), and not for sessions that
 were already waiting when the page loaded. **long turns** adds one when a turn
-that ran 3 minutes or longer ends. **mute** silences both. Both stay set in the
-browser. A permission prompt still can't be seen (see the table above), and
+that ran 3 minutes or longer ends. **stalls** adds one when a running tile
+turns stalled (yellow): the overdue tool and how long it has run, or how long
+the session has been quiet. It notifies once per stall, not for sessions that
+were already stalled when the page loaded, and is off by default since the
+stall limits are guesses. **mute** silences them all. The choices stay set in
+the browser. A permission prompt still can't be seen (see the table above), and
 the page has to be open in a tab, served from `127.0.0.1` or `localhost`
 (browsers allow notifications only there or over HTTPS). A tab in the
 background polls every 15 s, so a notification can come up to 15 s late. A
