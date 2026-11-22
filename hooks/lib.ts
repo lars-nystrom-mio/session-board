@@ -263,16 +263,18 @@ export function summarize(tool: string, input: Record<string, unknown>): string 
 
 // "/deliver-story 1234" -> { name, args }. A slash command reaches the
 // turn as markup: <command-name>/x</command-name> ... <command-args>y</command-args>.
+// The args come back whole, so a work item at the end of a long prompt is still
+// read; whoever stores or shows them clips them.
 export function slashCommand(text: string): { name: string; args: string } | null {
   const tagged = text.match(/<command-name>\/?([^<]+)<\/command-name>/)
   if (tagged?.[1]) {
     const args = text.match(/<command-args>([\s\S]*?)<\/command-args>/)?.[1] ?? ''
-    return { name: tagged[1].trim(), args: clip(args, 200) }
+    return { name: tagged[1].trim(), args }
   }
   const tag = text.match(/^\s*<command-message>([^<]+)<\/command-message>/)
   if (tag?.[1]) return { name: tag[1].trim(), args: '' }
   const m = text.trim().match(/^\/([\w:.-]+)(?:\s+([\s\S]*))?$/)
-  return m?.[1] ? { name: m[1], args: clip(m[2] ?? '', 200) } : null
+  return m?.[1] ? { name: m[1], args: m[2] ?? '' } : null
 }
 
 // Built-in commands that tend to the session rather than start a task. They

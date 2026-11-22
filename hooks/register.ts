@@ -498,7 +498,8 @@ function setSkill(name: string, args: string) {
   if (!board || !name) return
   board.activeSkill = name
   if (!skillSetThisTurn || !board.skill) {
-    board.skill = { name, args, at: now() }
+    // The work item comes from the whole args; only the stored copy is clipped.
+    board.skill = { name, args: clip(args, 200), at: now() }
     skillSetThisTurn = true
     board.workItem = skillWorkItem(name, args) ?? board.workItem
   }
