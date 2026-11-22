@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
-import { STALE_BOARD_MS, removeScript, staleBoards, costDayOf, localDay, addMessage, crossSessionMessage, peerNotice, sendTarget, MAX_MESSAGES, boardStatus, progressOf, progressText, boardPlan, planWaiting, plannedWork, pruneShells, shellReported, shellToolDone, SHELL_MAX_MS, addPrs, adoOrgOf, cronFired, cronToolDone, nextCronMatch, pruneCrons, CRON_EXPIRY_MS, WAKEUP_ID, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, childLabel, deriveState, freshBoard, memoryOf, parseMachine, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, summarize, toolLabel, trimAgents, workItemOf, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
+import { STALE_BOARD_MS, removeScript, staleBoards, costDayOf, localDay, addMessage, crossSessionMessage, peerNotice, sendTarget, MAX_MESSAGES, boardStatus, progressOf, progressText, boardPlan, planWaiting, plannedWork, pruneShells, shellReported, shellToolDone, SHELL_MAX_MS, addPrs, adoOrgOf, cronFired, cronToolDone, nextCronMatch, pruneCrons, CRON_EXPIRY_MS, WAKEUP_ID, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, childLabel, deriveState, freshBoard, memoryOf, parseMachine, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, summarize, toolLabel, trimAgents, workItemOf, skillTakesWorkItem, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
 
 describe('summaries', () => {
   test('a tool call becomes one short line', async () => {
@@ -22,6 +22,13 @@ describe('summaries', () => {
     // /deliver as orchestrate-delivery starts it: the issue URL wins over other digits.
     expect(workItemOf('https://github.com/o/r/issues/12 medium report-to=orch-2024 name=dlv-12', true)).toBe('12')
     expect(workItemOf('see https://github.com/o/r/issues/12', false)).toBe(null)
+  })
+
+  test('only delivery and orchestrate skills read a bare number as the work item', async () => {
+    for (const name of ['deliver', 'deliver-story', 'gh-issue-delivery', 'work-item-delivery', 'orchestrate-delivery', 'gh-orchestrate-delivery'])
+      expect(skillTakesWorkItem(name)).toBe(true)
+    for (const name of ['code-review', 'security-review', 'pr', 'loop', 'log-check'])
+      expect(skillTakesWorkItem(name)).toBe(false)
   })
 
   test('years and dates are not work items', async () => {
@@ -247,6 +254,44 @@ test('a subagent turn inside the main turn neither ends nor hides it', async ($,
   expect(board.done?.note).toBe('delivered')
   expect(board.prompt).toBe('deliver #29588')
   expect(board.turns).toBe(1)
+})
+
+test('a skill that takes a PR number does not set the work item', async ($, on) => {
+  const clock = mock.clock(on, { now: 1_000 })
+  mock.env(on, { SESSION_BOARD_DIR: '/board' })
+  const files = new Map<string, string>()
+  on('session.id', () => ({ value: 's1' }))
+  on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  on('fs.exists', (_$, e) => ({ value: files.has(e.path) }))
+  on('fs.read', (_$, e) => ({ value: files.get(e.path) ?? '' }))
+  on('fs.write', (_$, e) => {
+    files.set(e.path, e.text)
+    return { value: undefined }
+  })
+  on('fs.list', () => ({ value: [] }))
+  on('turn.start', (_$, e) => ({ turnId: e.turnId }))
+  on('turn.complete', () => ({ text: '' }))
+  on('tool.call', { tool: 'Skill' }, () => ({ result: 'loaded' }))
+  const status = async () => {
+    await clock.advance(1_000)
+    const [, text] = [...files].find(([path]) => /[\\/]sessions[\\/]s1\.json$/.test(path)) ?? []
+    return JSON.parse(text ?? '{}')
+  }
+  const turn = async (text: string, turnId: string, skill?: { skill: string; args: string }) => {
+    await $.turn.start({ text, turnId })
+    if (skill) await $.tool.call({ tool: 'Skill', ...skill })
+    await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId, reason: 'answer' })
+  }
+
+  await $.session.start({ cwd: '/x', surface: null, isInteractive: true })
+  await turn('/code-review high 1234', 't1')
+  expect((await status()).workItem ?? null).toBe(null)
+
+  await turn('/gh-issue-delivery https://github.com/o/r/issues/49 medium', 't2')
+  expect((await status()).workItem).toBe('49')
+  // The delivery runs code-review on its PR in a later turn: the work item stays.
+  await turn('<agent-message from="a1">verified</agent-message>', 't3', { skill: 'code-review', args: 'medium 62' })
+  expect((await status()).workItem).toBe('49')
 })
 
 describe('prompt cache', () => {

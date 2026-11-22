@@ -48,6 +48,7 @@ import {
   sessionTitleOf,
   shellReported,
   shellToolDone,
+  skillTakesWorkItem,
   slashCommand,
   summarize,
   toolLabel,
@@ -498,7 +499,7 @@ function setSkill(name: string, args: string) {
   if (!skillSetThisTurn || !board.skill) {
     board.skill = { name, args, at: now() }
     skillSetThisTurn = true
-    board.workItem = workItemOf(args, true) ?? board.workItem
+    board.workItem = workItemOf(args, skillTakesWorkItem(name)) ?? board.workItem
   }
   event('skill', `${name} ${args}`)
 }

@@ -340,6 +340,13 @@ export function addMessage(board: Board, rec: MessageRec): boolean {
 // taken for a year unless it opens the args ("/deliver 2045"). "#2026" on its
 // own still counts: it names an item. An Azure DevOps work item URL in skill
 // args gives its id, like a GitHub issue URL.
+// Only skills that take a work item read a bare number or an issue URL in
+// their args as one: a delivery or an orchestration. Others, like
+// "/code-review high 1234", name a PR or something else by number.
+export function skillTakesWorkItem(name: string): boolean {
+  return /deliver|orchestrat/i.test(name)
+}
+
 const DATE = /^(?:(?:19|20)\d\d(?:[-/.]\d{1,2}){1,2}|(?:\d{1,2}[-/.]){1,2}(?:19|20)\d\d)$/
 
 export function workItemOf(text: string, allowBare: boolean): string | null {
