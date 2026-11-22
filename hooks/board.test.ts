@@ -741,7 +741,7 @@ describe('old status files', () => {
   const now = 1_800_000_000_000
   const at = (updatedAt: unknown) => JSON.stringify({ updatedAt })
 
-  test('only files a week old or more are deleted, never this session\'s own', async () => {
+  test('only files more than a week old are deleted, never this session\'s own', async () => {
     const files = [
       { name: 'old.json', text: at(now - STALE_BOARD_MS - 1) },
       { name: 'recent.json', text: at(now - STALE_BOARD_MS + 60_000) },
@@ -761,6 +761,30 @@ describe('old status files', () => {
       { name: 'c-live.json', text: of(now - 1_000, 'C:\\c') },
     ]
     expect(staleBoards(files, 'self', now).sort()).toEqual(['a-old.json', 'c-old.json'])
+  })
+
+  test('each work item keeps its newest file, so a plan strip still shows it', async () => {
+    const week = now - STALE_BOARD_MS
+    const of = (updatedAt: number, workItem: string | null) => JSON.stringify({ updatedAt, cwd: 'C:\\p', workItem })
+    const files = [
+      { name: 'live.json', text: of(now - 1_000, null) },
+      { name: 'w12-old.json', text: of(week - 9_000, '12') },
+      { name: 'w12-new.json', text: of(week - 5_000, '12') },
+      { name: 'none.json', text: of(week - 9_000, null) },
+    ]
+    expect(staleBoards(files, 'self', now).sort()).toEqual(['none.json', 'w12-old.json'])
+  })
+
+  test('projects are told apart as the server does, and relative paths have none', async () => {
+    const week = now - STALE_BOARD_MS
+    const of = (updatedAt: number, cwd: string) => JSON.stringify({ updatedAt, cwd })
+    const files = [
+      { name: 'root.json', text: of(week - 9_000, 'C:\\') },
+      { name: 'rel.json', text: of(week - 5_000, 'C:') },
+      { name: 'dots-old.json', text: of(week - 9_000, 'C:\\r\\x\\..\\.\\a') },
+      { name: 'dots-new.json', text: of(week - 5_000, 'c://r//a') },
+    ]
+    expect(staleBoards(files, 'self', now).sort()).toEqual(['dots-old.json', 'rel.json'])
   })
 
   test('unreadable, unparsable and foreign files are left alone', async () => {

@@ -378,9 +378,10 @@ cd server && python -m unittest
 
 The dashboard hides status files of ended sessions after 24 hours, and each
 session start deletes the ones in `sessions/` that no session has written for a
-week, keeping each project's newest so the queue still knows the project. A
-session on your PC never cleans `sandboxed/`; one inside a sandbox cleans its
-mount of it the same way.
+week. Each project's newest file stays, so the queue still knows the project,
+and so does each work item's, so a plan strip still shows it done. Deleting
+goes through `powershell.exe`, so it happens on Windows only; `sandboxed/` is
+never cleaned.
 
 ## Licence
 

@@ -319,9 +319,9 @@ async function tick($: EngineInterface) {
 
 const REMOVE_BATCH = 100 // paths per delete command, well inside Windows' command-line limit
 
-// Deletes status files no session has written for a week, in this session's
-// own sessions/ only: sandboxed/ isn't the mod's, though a session inside a
-// sandbox cleans its mount of it like any other sessions/.
+// Deletes status files no session has written for a week. sandboxed/ is left
+// alone: the mod doesn't own it, and a session inside a (Linux) sandbox has no
+// powershell.exe to delete its mount of it with.
 async function pruneOldBoards($: EngineInterface, dir: string, self: string) {
   try {
     const files: { name: string; text: string | null }[] = []
@@ -338,14 +338,11 @@ async function pruneOldBoards($: EngineInterface, dir: string, self: string) {
   } catch {}
 }
 
-// $.fs has no delete. PowerShell on Windows; rm only where it can't run.
+// $.fs has no delete. Only PowerShell: its command checks each file's age
+// again right before deleting it, and where it can't run nothing is deleted.
 async function removeFiles($: EngineInterface, paths: string[]) {
   try {
-    const run = await $.process.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', removeScript(paths)], { timeoutMs: 20_000 })
-    if (run.exitCode === 0) return
-  } catch {}
-  try {
-    await $.process.run(['rm', '-f', '--', ...paths], { timeoutMs: 20_000 })
+    await $.process.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', removeScript(paths)], { timeoutMs: 20_000 })
   } catch {}
 }
 

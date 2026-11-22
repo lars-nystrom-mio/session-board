@@ -1258,12 +1258,13 @@ export const isBoardFileName = (name: string) => /^[A-Za-z0-9_-]+\.json$/.test(n
 // be caught mid-write, or not be a status file at all). The newest file of
 // each project stays too: the server's project list (`known_projects`, the
 // queue form and **+**) comes from these files alone, keyed the same way, by
-// the repo's root or else the cwd.
+// the repo's root or else the cwd. So does the newest of each work item, which
+// a plan strip reads an item's state from.
 export function staleBoards(files: { name: string; text: string | null }[], self: string, now: number): string[] {
-  const read: { name: string; at: number; project: string | null }[] = []
+  const read: { name: string; at: number; project: string | null; workItem: string | null }[] = []
   for (const f of files) {
     if (!isBoardFileName(f.name) || f.name === `${self}.json` || f.text === null) continue
-    let b: { updatedAt?: unknown; cwd?: unknown; repo?: { root?: unknown } | null } | null
+    let b: { updatedAt?: unknown; cwd?: unknown; repo?: { root?: unknown } | null; workItem?: unknown } | null
     try {
       b = JSON.parse(f.text) as typeof b
     } catch {
@@ -1271,18 +1272,30 @@ export function staleBoards(files: { name: string; text: string | null }[], self
     }
     if (!b || typeof b.updatedAt !== 'number') continue
     const path = typeof b.repo?.root === 'string' && b.repo.root ? b.repo.root : b.cwd
-    read.push({ name: f.name, at: b.updatedAt, project: typeof path === 'string' && path ? projectKey(path) : null })
+    const workItem = typeof b.workItem === 'string' && b.workItem ? b.workItem : null
+    read.push({ name: f.name, at: b.updatedAt, project: typeof path === 'string' ? projectKey(path) : null, workItem })
   }
   const newest = new Map<string, string>()
-  for (const r of [...read].sort((a, b) => a.at - b.at)) if (r.project) newest.set(r.project, r.name)
+  for (const r of [...read].sort((a, b) => a.at - b.at)) {
+    if (r.project) newest.set(`p:${r.project}`, r.name)
+    if (r.workItem) newest.set(`w:${r.workItem}`, r.name)
+  }
   const kept = new Set(newest.values())
   return read.filter((r) => now - r.at > STALE_BOARD_MS && !kept.has(r.name)).map((r) => r.name)
 }
 
-// A folder as `known_projects` in serve.py tells them apart on Windows: case
-// and slash direction don't count.
-function projectKey(path: string): string {
-  return path.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+// A folder as `known_projects` in serve.py tells them apart on Windows
+// (normcase of normpath): case, slash direction, doubled slashes and . or ..
+// steps don't count. A relative path, which it skips, has no key.
+function projectKey(path: string): string | null {
+  const m = /^([A-Za-z]:)?[\\/]/.exec(path)
+  if (!m) return null
+  const parts: string[] = []
+  for (const part of path.slice(m[0].length).split(/[\\/]+/)) {
+    if (part === '..') parts.pop()
+    else if (part && part !== '.') parts.push(part)
+  }
+  return `${m[1] ?? ''}/${parts.join('/')}`.toLowerCase()
 }
 
 // A PowerShell command that deletes these files. It checks each file's age
