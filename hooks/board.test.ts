@@ -38,6 +38,17 @@ describe('summaries', () => {
     expect(skillWorkItem('loop', '5m /work-item-delivery 25229')).toBe('25229')
     expect(skillWorkItem('loop', '10m /gh-issue-delivery https://github.com/o/r/issues/49')).toBe('49')
     expect(skillWorkItem('loop', '5m /code-review high 1234')).toBe(null)
+    expect(skillWorkItem('loop', '/deliver 1234')).toBe('1234')
+    expect(skillWorkItem('loop', '10m check CI on #1234')).toBe('1234')
+    expect(skillWorkItem('schedule', 'daily deliver #1234')).toBe('1234')
+    // "#1234" counts for any skill but one that takes a PR; a bare number doesn't.
+    expect(skillWorkItem('fix-issue', '#1234')).toBe('1234')
+    expect(skillWorkItem('fix-issue', '1234')).toBe(null)
+    expect(skillWorkItem('security-review', '#1234')).toBe(null)
+    // Only a wrapper runs a command, and only one that opens its args.
+    expect(skillWorkItem('code-review', 'explain why /deliver 1234 failed')).toBe(null)
+    expect(skillWorkItem('fix-issue', 'see /deliver 1234')).toBe(null)
+    expect(skillWorkItem('loop', '5m see /deliver 1234')).toBe(null)
   })
 
   test('years and dates are not work items', async () => {
@@ -305,6 +316,8 @@ test('a skill that takes a PR number does not set the work item', async ($, on) 
   expect((await status()).workItem).toBe('49')
   await turn('/code-review high #1234', 't4')
   expect((await status()).workItem).toBe('49')
+  await turn('/fix-issue #1301', 't4b')
+  expect((await status()).workItem).toBe('1301')
   // A plain prompt still names a work item with "#".
   await turn('now continue on #1300', 't5')
   expect((await status()).workItem).toBe('1300')

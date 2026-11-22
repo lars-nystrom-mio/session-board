@@ -63,10 +63,10 @@ install it and how to serve the page. This file is for working on it.
   GitHub issue URL in skill args (so `/deliver https://github.com/o/r/issues/12`
   is `12`), an Azure DevOps `_workitems/edit/<id>` URL or a bare 4–7 digit
   number in skill args. Only a delivery or orchestrate skill
-  (`skillTakesWorkItem`, by name) reads one from its args, so neither
-  `/code-review high 1234` nor `/code-review #1234` names a work item, and a
-  wrapper like `/loop 5m /deliver 1234` gives its inner command's
-  (`skillWorkItem`). A number inside a date or a word (`2026-10-31`,
+  (`skillTakesWorkItem`, by name) reads a URL or bare number from its args,
+  a `#1234` counts for any skill but a PR-taking one (`/code-review #1234`
+  names no work item), and `/loop 5m /deliver 1234` gives its inner
+  command's (`skillWorkItem`). A number inside a date or a word (`2026-10-31`,
   `orch-2024`) never counts, nor a bare 1900–2099 (a year) unless it opens
   the args. Plan items name work items by number alone, so two repos' `#12` in one plan are the same row. The
   board starts nothing from a plan.

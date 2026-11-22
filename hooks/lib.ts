@@ -331,14 +331,17 @@ export function addMessage(board: Board, rec: MessageRec): boolean {
   return true
 }
 
-// Only a skill that takes a work item reads one from its args: a delivery
-// or an orchestration, by name ("deliver", "deliver-story",
-// "gh-issue-delivery", "work-item-delivery", "orchestrate-delivery", with or
-// without a plugin prefix). Others, like "/code-review high 1234" or
-// "/code-review #1234", name a PR or something else by number. A skill that
-// runs another command, like "/loop 5m /work-item-delivery 25229", gives the
-// work item of the command it runs.
+// The work item a skill's args name. Only a skill that takes a work item
+// reads a bare number or an issue URL as one: a delivery or an orchestration,
+// by name ("deliver", "deliver-story", "gh-issue-delivery",
+// "work-item-delivery", "orchestrate-delivery", with or without a plugin
+// prefix). "#1234" names a work item for any skill but one that takes a PR,
+// so neither "/code-review high 1234" nor "/code-review #1234" gives one.
+// /loop and /schedule give the work item of the command they run when one
+// opens their args ("5m /work-item-delivery 25229"), else a "#1234" in them.
 const WORK_ITEM_SKILL = /(?:^|[-:])(?:deliver(?:y|-story)?|orchestrate(?:-delivery)?)$/i
+const PR_SKILL = /(?:^|[-:])(?:review|ultrareview|pr|simplify)$/i
+const WRAPPER_SKILL = /(?:^|:)(?:loop|schedule)$/i
 
 export function skillTakesWorkItem(name: string): boolean {
   return WORK_ITEM_SKILL.test(name)
@@ -346,8 +349,10 @@ export function skillTakesWorkItem(name: string): boolean {
 
 export function skillWorkItem(name: string, args: string, depth = 0): string | null {
   if (skillTakesWorkItem(name)) return workItemOf(args, true)
-  const inner = depth < 2 ? args.match(/(?:^|\s)\/([\w:-]+)(?:\s+([\s\S]*))?$/) : null
-  return inner?.[1] ? skillWorkItem(inner[1], inner[2] ?? '', depth + 1) : null
+  if (PR_SKILL.test(name)) return null
+  const inner = depth < 2 && WRAPPER_SKILL.test(name) ? args.match(/^\s*(?:\S+\s+)?\/([\w:.-]+)(?:\s+([\s\S]*))?$/) : null
+  if (inner?.[1]) return skillWorkItem(inner[1], inner[2] ?? '', depth + 1)
+  return workItemOf(args, false)
 }
 
 // A work item id: "#1234" anywhere, or in skill args a GitHub issue URL (its
