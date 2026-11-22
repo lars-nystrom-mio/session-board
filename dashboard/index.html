@@ -2324,6 +2324,7 @@ try {
 const waitNoted = new Map()  // sessionId -> waiting.since last notified
 const stateWas = new Map()   // sessionId -> its state at the previous poll
 const stallWas = new Map()   // sessionId -> whether it looked stalled at the previous poll
+const stallNoted = new Map() // sessionId -> key of the stall last notified
 const turns = new Map()      // sessionId -> { n, ms, from }: turn number, working time so far, open stretch
 const lastSeen = new Map()   // sessionId -> when a poll last listed it
 const FORGET_MS = 60_000     // a file can miss a poll (read mid-write): keep what we know this long
@@ -2353,7 +2354,7 @@ function noteTransitions(list, now) {
   for (const s of list) lastSeen.set(s.sessionId, now)
   for (const [id, at] of lastSeen) {
     if (now - at <= FORGET_MS) continue
-    for (const m of [lastSeen, waitNoted, stateWas, stallWas, turns]) m.delete(id)
+    for (const m of [lastSeen, waitNoted, stateWas, stallWas, stallNoted, turns]) m.delete(id)
   }
   for (const s of list) {
     if (s.sandboxed) continue
@@ -2375,11 +2376,19 @@ function noteTransitions(list, now) {
     noteTurn(s, now)
     // A stall the page saw begin, from `stalls` as this poll's render worked
     // it out. Sessions already stalled when the page first lists them stay
-    // quiet, and one stall notifies once however long it lasts.
+    // quiet, and one stall notifies once however long it lasts: a poll where
+    // the file is stale (a late heartbeat, a PC waking up) says nothing, and
+    // the same overdue tool or quiet stretch coming back doesn't notify again.
     const stall = stalls.get(id)
     const stallBefore = stallWas.get(id)
-    stallWas.set(id, !!stall)
-    if (stall && stallBefore === false && notifyStall) notify(s, 'stall', now - stall.since, stall)
+    if (!isStale(s)) stallWas.set(id, !!stall)
+    if (stall && stallBefore === false && !isStale(s)) {
+      const key = stall.tool ? `tool:${stall.tool.id}` : `quiet:${stall.since}`
+      if (stallNoted.get(id) !== key) {
+        stallNoted.set(id, key)
+        if (notifyStall) notify(s, 'stall', now - stall.since, stall)
+      }
+    }
   }
   notifyPrimed = true
 }
@@ -2426,7 +2435,10 @@ function notify(s, kind, took = 0, stall = null) {
       : [`Ran ${dur(took)}`, what].filter(Boolean).join(' · ')
   try {
     // The tag keeps two open boards from showing the same notification twice.
-    const n = new Notification(title, { body: body.slice(0, 240), tag: `${s.sessionId}:${kind}:${stall ? stall.since : s.stateSince}` })
+    // A quiet stall's `since` is when this page saw the file change, which
+    // another board sees at another moment, so its tag names the turn instead.
+    const at = stall ? (stall.tool ? stall.tool.id : `quiet:${s.turns}`) : s.stateSince
+    const n = new Notification(title, { body: body.slice(0, 240), tag: `${s.sessionId}:${kind}:${at}` })
     n.onclick = () => {
       window.focus()
       n.close()

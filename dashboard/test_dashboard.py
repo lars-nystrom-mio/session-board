@@ -594,6 +594,15 @@ class MessagesView(unittest.TestCase):
         [note] = self.notes()
         self.assertEqual(note['title'], 'Looks stalled: pipelines · tests')
         self.assertRegex(note['body'], r'^REPL running for 22m \d\ds · Fix the thing\.$')
+        # A poll where it doesn't look stalled, then back with the same overdue
+        # tool, is the same stall: still one notification.
+        tool = [{'id': 't6', 'tool': 'REPL', 'summary': 'npm test', 'since': now - 22 * MIN}]
+        self.rewrite(S6, tabTitle='tests', state='idle', tools=tool)
+        self.page.wait_for_function(f'''!document.querySelector('.tile[data-session="{S6}"]').classList.contains('stalled')''')
+        self.rewrite(S6, tabTitle='tests', state='running', tools=tool)
+        self.page.wait_for_function(f'''document.querySelector('.tile[data-session="{S6}"]').classList.contains('stalled')''')
+        self.page.wait_for_timeout(2500)
+        self.assertEqual(len(self.notes()), 1)
         self.page.evaluate('notes[0].onclick()')
         self.settled()
         self.assertTrue(self.page.evaluate('notes[0].closed'))
@@ -633,8 +642,10 @@ class MessagesView(unittest.TestCase):
         self.assertEqual(self.notes(), [])
 
     def test_a_turn_counts_its_background_agents_but_not_a_wait_for_you(self):
-        self.notify_page(**{'sessionBoard.notifyLong': '1'})
+        # From now, not the fixture's time: the suite may have run a while since.
         now = int(time.time() * 1000)
+        self.rewrite(S3, stateSince=now - 15 * MIN)
+        self.notify_page(**{'sessionBoard.notifyLong': '1'})
         # S3 ran 15 minutes, then waits for you: no "turn ended", and the wait doesn't count.
         self.rewrite(S3, state='waiting', stateSince=now, tools=[], waiting={'kind': 'question', 'detail': 'Which?', 'since': now})
         self.page.wait_for_function('notes.length === 1')
