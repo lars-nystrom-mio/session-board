@@ -483,6 +483,22 @@ class MessagesView(unittest.TestCase):
         self.assertEqual(note['title'], 'Turn ended: pipelines · long build')
         self.assertRegex(note['body'], r'^Ran 18m( \d\ds)? · Fix the thing\.$')
 
+    def test_a_plan_gate_notifies_once_through_short_turns(self):
+        self.notify_page()
+        now = int(time.time() * 1000)
+        gate = {'kind': 'plan', 'detail': 'Go-ahead for the plan', 'since': now - 10 * MIN}
+        # Set before the page loaded, but the page sees the session start waiting on it.
+        self.rewrite(S6, state='waiting', stateSince=now, tools=[], waiting=gate,
+                     plan={'items': [], 'gate': {'since': now - 10 * MIN, 'questions': []}})
+        self.page.wait_for_function('notes.length === 1')
+        # A message starts a short turn; the gate comes back with the same since.
+        self.rewrite(S6, state='running', stateSince=now + 1000, waiting=None, turns=5)
+        self.page.wait_for_function(f'''document.querySelector('.tile[data-session="{S6}"] .since').textContent.includes('running')''')
+        self.rewrite(S6, state='waiting', stateSince=now + 20_000, waiting=gate)
+        self.page.wait_for_selector(f'.tile[data-session="{S6}"] .ask')
+        self.page.wait_for_timeout(2500)
+        self.assertEqual([n['title'] for n in self.notes()], ['Needs you: pipelines · repl test run'])
+
     def test_permission_is_asked_from_the_button_not_on_load(self):
         self.notify_page(perm='default')
         self.assertTrue(self.page.is_visible('#notify-ask'))

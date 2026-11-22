@@ -256,7 +256,8 @@ Click **turn on** beside **notify** in the header and allow notifications, and
 the board raises a desktop notification when a session starts needing you: the
 project, the terminal tab's name and the reason (a question or a plan to
 approve, with its text). Clicking it brings the board forward with that
-session's drawer open. It notifies once per wait, and not for sessions that
+session's drawer open. It notifies once per wait (a plan's gate counts as one
+wait however many short turns run while it's open), and not for sessions that
 were already waiting when the page loaded. **long turns** adds one when a turn
 that ran 3 minutes or longer ends. **mute** silences both. Both stay set in the
 browser. A permission prompt still can't be seen (see the table above), and

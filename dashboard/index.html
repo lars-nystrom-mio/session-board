@@ -2206,15 +2206,17 @@ $('queue').addEventListener('click', async (e) => {
 // asked from the header's "turn on", never on load. 127.0.0.1 is a secure
 // context, so this works without HTTPS.
 const LONG_TURN_MS = 3 * 60_000
-const NOTIFY_OK = 'Notification' in window
+// Browsers deny it outside a secure context (http on a LAN name or address).
+const NOTIFY_OK = 'Notification' in window && window.isSecureContext
 let notifyMute = false
 let notifyLong = false
 try {
   notifyMute = !!localStorage.getItem('sessionBoard.notifyMute')
   notifyLong = !!localStorage.getItem('sessionBoard.notifyLong')
 } catch {}
-const waitNoted = new Map()  // sessionId -> waiting.since already notified
-const turns = new Map()      // sessionId -> { ms, from }: a turn's working time so far, and its open stretch
+const waitNoted = new Map()  // sessionId -> waiting.since last notified
+const stateWas = new Map()   // sessionId -> its state at the previous poll
+const turns = new Map()      // sessionId -> { n, ms, from }: turn number, working time so far, open stretch
 const lastSeen = new Map()   // sessionId -> when a poll last listed it
 const FORGET_MS = 60_000     // a file can miss a poll (read mid-write): keep what we know this long
 const loadedAt = Date.now()
@@ -2241,37 +2243,58 @@ function setNotify(key, on) {
 function noteTransitions(list, now) {
   for (const s of list) lastSeen.set(s.sessionId, now)
   for (const [id, at] of lastSeen) {
-    if (now - at > FORGET_MS) { lastSeen.delete(id); waitNoted.delete(id); turns.delete(id) }
+    if (now - at <= FORGET_MS) continue
+    for (const m of [lastSeen, waitNoted, stateWas, turns]) m.delete(id)
   }
   for (const s of list) {
     if (s.sandboxed) continue
     const id = s.sessionId
-    const live = s.state !== 'ended' && !isStale(s)
-    // A wait that began before the page loaded was already there: no notification.
-    if (s.state === 'waiting' && s.waiting) {
+    const was = stateWas.get(id)
+    stateWas.set(id, s.state)
+    // A wait the page saw begin, or one in a session it first sees after
+    // loading. Sessions already waiting at the first poll stay quiet. A plan
+    // gate keeps its `since` through the short turns a message starts, so the
+    // same wait never notifies twice.
+    if (s.state === 'waiting' && s.waiting && !isStale(s)) {
       const key = s.waiting.since ?? s.stateSince
-      if (waitNoted.get(id) !== key) {
+      const fresh = was ? was !== 'waiting' : key > loadedAt
+      if (fresh && waitNoted.get(id) !== key) {
         waitNoted.set(id, key)
-        if (live && key > loadedAt) notify(s, 'waiting')
+        notify(s, 'waiting')
       }
-    } else {
-      waitNoted.delete(id)
     }
-    // A turn lasts while the main loop or its background agents work. A wait
-    // for you pauses it without counting; idle or ended closes it.
-    const at = s.stateSince || now
-    const turn = turns.get(id)
-    if (s.state === 'running' || s.state === 'background') {
-      if (!turn) turns.set(id, { ms: 0, from: at })
-      else if (turn.from == null) turn.from = at
-    } else if (turn) {
-      if (turn.from != null) { turn.ms += Math.max(0, at - turn.from); turn.from = null }
-      if (s.state === 'waiting') continue
-      turns.delete(id)
-      if (notifyPrimed && notifyLong && turn.ms >= LONG_TURN_MS) notify(s, 'turn', turn.ms)
-    }
+    noteTurn(s, now)
   }
   notifyPrimed = true
+}
+
+// A turn is one value of `turns`, which the hooks count up as each main turn
+// starts. It works while the main loop or its background agents run; a wait
+// for you inside it doesn't count. It ends when the next turn starts, or the
+// session goes idle, ends, or waits on a plan's gate (after its turn ended).
+function noteTurn(s, now) {
+  const id = s.sessionId
+  const at = s.stateSince || now
+  let turn = turns.get(id)
+  const close = () => {
+    if (turn.from != null) turn.ms += Math.max(0, at - turn.from)
+    turns.delete(id)
+    if (notifyPrimed && notifyLong && turn.ms >= LONG_TURN_MS) notify(s, 'turn', turn.ms)
+    turn = null
+  }
+  if (turn && turn.n !== s.turns) close()
+  const working = s.state === 'running' || s.state === 'background'
+  if (working) {
+    if (!turn) turns.set(id, { n: s.turns, ms: 0, from: at })
+    else if (turn.from == null) turn.from = at
+  } else if (turn) {
+    const gate = s.state === 'waiting' && s.waiting?.kind === 'plan' && s.plan?.gate
+    if (s.state === 'waiting' && !gate) {
+      if (turn.from != null) { turn.ms += Math.max(0, at - turn.from); turn.from = null }
+    } else {
+      close()
+    }
+  }
 }
 
 function notify(s, kind, took = 0) {
