@@ -147,6 +147,13 @@ SESSION_BOARD_DIR=<scratch dir> claude -p --plugin-dir . --model haiku "<prompt 
 - `turn.complete` with an `agentId` is a subagent finishing. The heartbeat also
   syncs from `$.agent.list()` while any agent is running.
 - `SubagentHandback` is an internal tool; it's in `QUIET_TOOLS`.
+- The tab title reaches the tile when a main turn ends: `readTranscript` reads
+  it from the transcript then and at session start. Claude Code writes the
+  `ai-title` during the first turn, so the tile shows it once that turn ends.
+  A `/rename` writes a `custom-title` at once, but runs no turn, so the tile
+  changes when the next turn ends. Claude Code keeps appending `ai-title`
+  records after a rename; `sessionTitleOf` prefers the newest `custom-title`
+  over any of them. Headless sessions get no `ai-title`.
 - Scheduled jobs come from `CronCreate`/`CronList`/`CronDelete`/`ScheduleWakeup`
   results. `nextFireAt` includes a per-job offset of up to half the period, so
   later firings are computed from the cron expression plus that offset. A
@@ -171,11 +178,6 @@ SESSION_BOARD_DIR=<scratch dir> claude -p --plugin-dir . --model haiku "<prompt 
   backspace character. Edit TypeScript with the Edit tool instead.
 
 ## Not verified yet
-
-- The tab title on a live interactive tile. `readTitle` reads the newest
-  `custom-title` or `ai-title` record from the transcript at session start and
-  when a main turn ends. A headless `/rename` showed up on the tile; headless
-  sessions get no `ai-title`.
 
 - An actual start from the queue: the Windows Terminal tab, that
   `--session-id` gives the status file the name the queue waits for, and that
