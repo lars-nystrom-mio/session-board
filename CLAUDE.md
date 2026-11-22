@@ -206,6 +206,8 @@ SESSION_BOARD_DIR=<scratch dir> claude -p --plugin-dir . --model haiku "<prompt 
 
 - Whether a resumed session's `costUsd` restarts at 0 or carries the earlier
   cost. `costDayOf` handles either, as long as the ended status file is there.
+  That needs `/clear` and a resume to keep the session id; with a new id the
+  old and new files would both count the carried cost.
 - An actual start from the queue: the Windows Terminal tab, that
   `--session-id` gives the status file the name the queue waits for, and that
   a delivery run calls `board_status` at its end without being told to.

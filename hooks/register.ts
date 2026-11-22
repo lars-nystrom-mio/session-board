@@ -17,6 +17,7 @@ import {
   adoPrShowArgv,
   cacheTtlOf,
   costDayOf,
+  localDay,
   agentStatusOf,
   boardPlan,
   boardStatus,
@@ -234,9 +235,10 @@ async function refreshSlow($: EngineInterface) {
       tokens: usage.context.tokens ?? null,
       window: usage.context.window,
     }
-    const before = board.costUsd
-    board.costUsd = usage.cost?.usd ?? null
-    board.costDay = costDayOf(board.costDay, before, board.costUsd, board.startedAt, now())
+    // A refresh without a cost keeps the last one, so the next can tell a reset.
+    const usd = usage.cost?.usd ?? null
+    board.costDay = costDayOf(board.costDay, board.costUsd, usd, board.startedAt, now())
+    if (usd !== null) board.costUsd = usd
   } catch {}
   try {
     const git = await $.process.run(['git', 'branch', '--show-current'], { cwd: board.cwd, timeoutMs: 5_000 })
@@ -338,7 +340,11 @@ async function init($: EngineInterface, cwd: string, interactive: boolean, reaso
   // board, so its day baseline carries on too, or today would count it all.
   if (previous && board !== previous) {
     board.costUsd = previous.costUsd ?? null
-    board.costDay = previous.costDay ?? null
+    // A file from older hooks has no baseline: what it had counts as spent
+    // today only if it started today.
+    board.costDay = previous.costDay ?? (typeof previous.costUsd === 'number'
+      ? { day: localDay(now()), usd: localDay(previous.startedAt) === localDay(now()) ? 0 : previous.costUsd }
+      : null)
   }
   board.cwd = cwd
   board.interactive = interactive
