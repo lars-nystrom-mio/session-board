@@ -777,7 +777,8 @@ async function loadSessions() {
 
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const NUMBER_KEYS = new Set(['startedAt', 'updatedAt', 'stateSince', 'promptAt', 'at', 'since', 'until', 't',
-  'turns', 'costUsd', 'usd', 'percent', 'tokens', 'window', 'nextAt', 'firedAt', 'endedAt', 'createdAt', 'offsetMs', 'number'])
+  'turns', 'costUsd', 'usd', 'percent', 'tokens', 'window', 'nextAt', 'firedAt', 'endedAt', 'createdAt', 'offsetMs', 'number',
+  'lastStepAt', 'lastToolEnd'])
 const LIST_KEYS = ['prs', 'tools', 'agents', 'events', 'crons', 'shells', 'messages']
 const TEXT_KEYS = ['cwd', 'project', 'branch', 'tabTitle', 'model', 'prompt', 'workItem', 'activeSkill', 'endReason']
 
@@ -1344,15 +1345,17 @@ const newest = (list, key) => list?.reduce((m, x) => Math.max(m, x?.[key] ?? 0),
 // a Read or Grep, which writes no event, just drops out of `tools`, and a
 // streamed answer only moves `lastStepAt` on. So the page also notes when it
 // last saw a session's file change in anything but its heartbeat. When it first
-// sees a session whose hooks write `lastToolEnd`, it counts from the newest
-// time in the file, so a reload doesn't restart the count. Without that field
-// the file's times can't say whether a tool just ended, so it counts from then.
+// sees a session whose hooks write `lastToolEnd` (null until a tool ends), it
+// counts from the newest time in the file, so a reload doesn't restart the
+// count. Without that field the file's times can't say whether a tool just
+// ended, so it counts from then. So does a main-loop Agent call in flight: its
+// subagent's Reads and Greps leave no time in the file.
 const seen = new Map()  // sessionId -> { sig, at }
 function lastActive(s, now) {
-  if (s.lastToolEnd == null) return now
-  const t = Math.max(s.lastToolEnd, s.lastStepAt ?? 0, s.promptAt ?? 0, s.stateSince ?? 0,
-    newest(s.events, 't'), newest(s.messages, 't'))
-  return Math.min(t, now)
+  if (!('lastToolEnd' in s) || s.tools.some((t) => !t.agentId && AGENT_TOOLS.has(t.tool))) return now
+  const t = Math.max(...[s.lastToolEnd, s.lastStepAt, s.promptAt, s.stateSince, newest(s.events, 't'), newest(s.messages, 't')]
+    .map((v) => Number.isFinite(v) ? v : 0))
+  return t > 0 ? Math.min(t, now) : now
 }
 function noteActivity(s, now) {
   const sig = JSON.stringify([s.state, s.turns, s.tools.map((t) => t.id), s.events.length, s.events.at(-1)?.t,

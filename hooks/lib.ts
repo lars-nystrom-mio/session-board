@@ -122,7 +122,8 @@ export type Board = {
   // activity, so a long streamed answer doesn't look like a hung session.
   lastStepAt?: number | null
   // When a main-thread tool last ended, Read and Grep included. Kept so a page
-  // that loads later can tell how long the session has been quiet.
+  // that loads later can tell how long the session has been quiet. A fresh
+  // board has it as null, which tells the page its hooks write it.
   lastToolEnd?: number | null
 }
 
@@ -1351,6 +1352,7 @@ export function freshBoard(sessionId: string, cwd: string, now: number): Board {
     shells: [],
     messages: [],
     done: null,
+    lastToolEnd: null,
   }
 }
 

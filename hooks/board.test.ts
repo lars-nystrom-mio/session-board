@@ -488,7 +488,7 @@ describe('model steps', () => {
 
   test('a main-thread tool ending moves lastToolEnd on, a subagent one does not', () => {
     const b = freshBoard('s1', '/x', 0)
-    expect(b.lastToolEnd ?? null).toBe(null)
+    expect(b.lastToolEnd).toBe(null) // present, so the page knows these hooks write it
     toolEndSeen(b, undefined, 100)
     expect(b.lastToolEnd).toBe(100)
     toolEndSeen(b, 'agent-1', 200)

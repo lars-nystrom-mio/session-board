@@ -431,6 +431,27 @@ class MessagesView(unittest.TestCase):
         finally:
             path.write_text(before, encoding='utf-8')
 
+    def test_an_agent_call_in_flight_counts_from_first_sight(self):
+        # The main loop waits on a subagent whose Reads leave no time in the
+        # file, so even with lastToolEnd the page counts from when it loads.
+        path = Path(self.dir.name) / 'sessions' / f'{S2}.json'
+        before = path.read_text(encoding='utf-8')
+        b = json.loads(before)
+        t = int(time.time() * 1000)
+        b['lastToolEnd'] = t - 70 * MIN
+        b['tools'] = [{'id': 'ta', 'tool': 'Agent', 'summary': 'explore', 'since': t - 70 * MIN}]
+        path.write_text(json.dumps(b), encoding='utf-8')
+        try:
+            self.page.close()
+            self.page = self.browser.new_page(viewport={'width': 1400, 'height': 1000})
+            self.page.on('pageerror', lambda e: self.errors.append(str(e)))
+            self.page.goto(self.url)
+            self.page.wait_for_selector(f'[data-session="{S2}"]')
+            self.page.wait_for_timeout(2500)
+            self.assertNotIn('stalled', self.tile(S2).get_attribute('class'))
+        finally:
+            path.write_text(before, encoding='utf-8')
+
     def test_a_streamed_answer_counts_as_activity(self):
         # No tool in flight for 12 minutes, but the model streamed 6 minutes in:
         # lastStepAt moved on, so the page saw something new and doesn't stall.
