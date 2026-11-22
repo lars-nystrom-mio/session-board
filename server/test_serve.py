@@ -86,6 +86,23 @@ class LogToFile(unittest.TestCase):
                 sys.stdout, sys.stderr = out, err
             self.assertEqual((Path(d) / "server.log").read_text(encoding="utf-8").strip(), "hello")
 
+    def test_log_is_capped(self):
+        from serve import CappedLog
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "server.log"
+            log = CappedLog(path, max_bytes=1000)
+            try:
+                for i in range(500):
+                    print(f"line {i:04}", file=log)
+            finally:
+                log.close()
+            old = path.with_suffix(".log.1")
+            self.assertLess(path.stat().st_size, 1000)
+            self.assertLess(old.stat().st_size, 1100)
+            kept = old.read_text(encoding="utf-8") + path.read_text(encoding="utf-8")
+            self.assertTrue(kept.endswith("line 0499\n"))
+            self.assertNotIn("line 0000", kept)
+
 
 class SameOrigin(unittest.TestCase):
     ok = {"Host": "127.0.0.1:8765", "Origin": "http://127.0.0.1:8765", "Content-Type": "application/json"}

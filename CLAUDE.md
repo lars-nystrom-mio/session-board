@@ -47,7 +47,8 @@ install it and how to serve the page. This file is for working on it.
   sample holds new starts (`memory_hold`, with hysteresis); the page's strip
   turns orange at the same marks, kept in step by hand (`RAM_HIGH_PCT`).
   Under `pythonw.exe` (the `SessionBoard` scheduled task in the README) it has
-  no stdout/stderr, so `log_to_file` sends them to `<board>/server.log` and
+  no stdout/stderr, so `log_to_file` sends them to `<board>/server.log`, which
+  `CappedLog` keeps under 2 MB with `server.log.1`, and
   successful requests aren't logged. Tests in `server/test_serve.py`.
 
 ## How the queue knows a session is finished
