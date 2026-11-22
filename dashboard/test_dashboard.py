@@ -411,6 +411,31 @@ class MessagesView(unittest.TestCase):
         self.page.wait_for_function(f'''document.querySelector('.tile[data-session="{S2}"]').classList.contains('stalled')''')
         self.assertTrue(self.tile(S2).locator('.since').inner_text().startswith('stalled · quiet 11m'))
 
+    def test_a_streamed_answer_counts_as_activity(self):
+        # No tool in flight for 12 minutes, but the model streamed 6 minutes in:
+        # lastStepAt moved on, so the page saw something new and doesn't stall.
+        path = Path(self.dir.name) / 'sessions' / f'{S2}.json'
+        before = path.read_text(encoding='utf-8')
+        self.page.close()
+        self.page = self.browser.new_page(viewport={'width': 1400, 'height': 1000})
+        self.page.on('pageerror', lambda e: self.errors.append(str(e)))
+        self.page.clock.install()
+        self.page.goto(self.url)
+        self.page.wait_for_selector(f'[data-session="{S2}"]')
+        try:
+            self.page.clock.run_for(6 * MIN)
+            self.page.wait_for_timeout(500)
+            b = json.loads(before)
+            b['lastStepAt'] = b['updatedAt'] + 6 * MIN
+            path.write_text(json.dumps(b), encoding='utf-8')
+            self.page.clock.run_for(3_000)  # the next poll reads it
+            self.page.wait_for_timeout(1000)
+            self.page.clock.run_for(6 * MIN)
+            self.page.wait_for_timeout(500)
+            self.assertNotIn('stalled', self.tile(S2).get_attribute('class'))
+        finally:
+            path.write_text(before, encoding='utf-8')
+
     def test_a_tool_that_ends_counts_as_activity(self):
         # The build ends: it leaves `tools` and writes no event, so the file's
         # newest time is 14 minutes old. The page saw the change, so no stall.

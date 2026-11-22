@@ -13,6 +13,7 @@ import {
   QUIET_TOOLS,
   addMessage,
   addPrs,
+  stepSeen,
   adoPrLink,
   adoPrShowArgv,
   cacheTtlOf,
@@ -225,6 +226,23 @@ async function readTranscript($: EngineInterface) {
 
 // A main-thread request the prompt cache served or was written by. The cache
 // entry's lifetime restarts when the request is sent, so `sent` is the start.
+// Forwards a model stream as it is, calling `seen` as each chunk arrives. A
+// failing `seen` never stops the stream; closing early closes the source.
+async function* streamed<T, R>(source: AsyncGenerator<T, R>, seen: () => void): AsyncGenerator<T, R> {
+  try {
+    for (;;) {
+      const r = await source.next()
+      if (r.done) return r.value
+      try {
+        seen()
+      } catch {}
+      yield r.value
+    }
+  } finally {
+    await source.return?.(undefined as R)
+  }
+}
+
 function cacheUsed($: EngineInterface, sent: number, usage: ModelUsage) {
   if (!board || usage.cache_read_input_tokens + usage.cache_creation_input_tokens === 0) return
   board.cache = { at: sent, ttl: board.cache?.ttl ?? null }
@@ -719,9 +737,14 @@ export const register: Register = (on) => {
   })
 
   // A model request; it streams, so the hook forwards the chunks as they come.
+  // The main thread's chunks also move lastStepAt on, which the heartbeat writes.
   on('turn.step', async function* ($, e, next) {
     const sent = now()
-    const result = yield* next(e)
+    const seen = () => {
+      if (board) stepSeen(board, e.agentId, now())
+    }
+    seen()
+    const result = yield* (e.agentId ? next(e) : streamed(next(e), seen))
     try {
       if (!e.agentId && result.usage) cacheUsed($, sent, result.usage)
     } catch {}

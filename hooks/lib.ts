@@ -117,6 +117,10 @@ export type Board = {
   // place of the phase inferred from subagents. Cleared by done, a new slash
   // command and /clear.
   progress?: Progress | null
+  // When the main thread's model last streamed: each chunk of a model request
+  // (turn.step) moves it on, and the heartbeat writes it. The page counts it as
+  // activity, so a long streamed answer doesn't look like a hung session.
+  lastStepAt?: number | null
 }
 
 // A session's cost at the start of a local day: `day` is YYYY-MM-DD in this
@@ -149,6 +153,13 @@ export function costDayOf(prev: CostDay | null | undefined, before: number | nul
 
 // What a board_status call reported, cleaned by progressOf. Each report
 // replaces the last one whole.
+// Notes that the model streamed at `t`. A subagent's steps don't count: a
+// background agent streaming says nothing about whether the main loop hangs.
+export function stepSeen(b: Board, agentId: string | undefined, t: number): void {
+  if (agentId || t <= (b.lastStepAt ?? 0)) return
+  b.lastStepAt = t
+}
+
 export type Progress = { at: number; phase: string; step: number | null; of: number | null; workItem: string | null }
 
 // A background task the session will hear from: a Bash or PowerShell call run
