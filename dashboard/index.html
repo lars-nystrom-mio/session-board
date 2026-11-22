@@ -663,6 +663,13 @@
       <button data-theme-pick="light" aria-pressed="false">light</button>
       <button data-theme-pick="auto" aria-pressed="false" title="follow the system setting">auto</button>
     </div>
+    <div class="sort" role="group" aria-label="Desktop notifications" id="notify" hidden>
+      <span>notify</span>
+      <button type="button" id="notify-ask" hidden title="show a desktop notification when a session needs you">turn on</button>
+      <span id="notify-blocked" hidden title="this browser blocks notifications from the board: allow them in its site settings">blocked</span>
+      <button type="button" id="notify-mute" aria-pressed="false" hidden title="no desktop notifications for now">mute</button>
+      <button type="button" id="notify-long" aria-pressed="false" hidden title="also notify when a turn that ran 3 minutes or longer ends">long turns</button>
+    </div>
   </div>
   <div class="ram-break"></div>
   <button class="ram" id="ram" data-memory hidden aria-haspopup="dialog"></button>
@@ -1987,6 +1994,9 @@ document.addEventListener('click', async (e) => {
     messageFocus = f === messageFocus ? null : f
     return renderDrawer()
   }
+  if (e.target.closest('#notify-ask')) return void Notification.requestPermission().then(renderNotify, renderNotify)
+  if (e.target.closest('#notify-mute')) return setNotify('notifyMute', notifyMute = !notifyMute)
+  if (e.target.closest('#notify-long')) return setNotify('notifyLong', notifyLong = !notifyLong)
   const tile = e.target.closest('[data-session]')
   if (tile) return openDrawer(tile.dataset.session)
   if (e.target.closest('[data-close]')) closeDrawer()
@@ -2187,6 +2197,91 @@ $('queue').addEventListener('click', async (e) => {
   }
 })
 
+// ---- Desktop notifications ------------------------------------------------
+
+// The title and favicon go unseen while you work in a terminal, so a session
+// that starts needing you can also raise a desktop notification. Only on a
+// change seen between two polls: sessions already waiting when the page loads
+// stay quiet, and one wait (keyed by its `since`) notifies once. Permission is
+// asked from the header's "turn on", never on load. 127.0.0.1 is a secure
+// context, so this works without HTTPS.
+const LONG_TURN_MS = 3 * 60_000
+const NOTIFY_OK = 'Notification' in window
+let notifyMute = false
+let notifyLong = false
+try {
+  notifyMute = !!localStorage.getItem('sessionBoard.notifyMute')
+  notifyLong = !!localStorage.getItem('sessionBoard.notifyLong')
+} catch {}
+const waitNoted = new Map()  // sessionId -> waiting.since already notified (or there on load)
+const turnFrom = new Map()   // sessionId -> when its running turn started
+let notifyPrimed = false
+
+function renderNotify() {
+  $('notify').hidden = !NOTIFY_OK
+  if (!NOTIFY_OK) return
+  const perm = Notification.permission
+  $('notify-ask').hidden = perm !== 'default'
+  $('notify-blocked').hidden = perm !== 'denied'
+  $('notify-mute').hidden = $('notify-long').hidden = perm !== 'granted'
+  $('notify-mute').setAttribute('aria-pressed', String(notifyMute))
+  $('notify-long').setAttribute('aria-pressed', String(notifyLong))
+}
+
+function setNotify(key, on) {
+  try { on ? localStorage.setItem(`sessionBoard.${key}`, '1') : localStorage.removeItem(`sessionBoard.${key}`) } catch {}
+  renderNotify()
+}
+
+// Runs after every poll, the tab hidden or not.
+function noteTransitions(list, now) {
+  const ids = new Set(list.map((s) => s.sessionId))
+  for (const m of [waitNoted, turnFrom]) for (const id of [...m.keys()]) if (!ids.has(id)) m.delete(id)
+  for (const s of list) {
+    const id = s.sessionId
+    const live = s.state !== 'ended' && !isStale(s)
+    if (s.state === 'waiting' && s.waiting) {
+      const key = s.waiting.since ?? s.stateSince
+      if (waitNoted.get(id) !== key) {
+        waitNoted.set(id, key)
+        if (notifyPrimed && live) notify(s, 'waiting')
+      }
+    } else {
+      waitNoted.delete(id)
+    }
+    // A turn runs from when the page sees it running until it leaves running
+    // for anything but a wait for you, which is part of the same turn.
+    if (s.state === 'running') {
+      if (!turnFrom.has(id)) turnFrom.set(id, s.stateSince || now)
+    } else if (s.state !== 'waiting' && turnFrom.has(id)) {
+      const took = (s.stateSince || now) - turnFrom.get(id)
+      turnFrom.delete(id)
+      if (notifyPrimed && notifyLong && took >= LONG_TURN_MS) notify(s, 'turn', took)
+    }
+  }
+  notifyPrimed = true
+}
+
+function notify(s, kind, took = 0) {
+  if (!NOTIFY_OK || notifyMute || Notification.permission !== 'granted') return
+  const name = [projectOf(s), s.tabTitle].filter(Boolean).join(' · ')
+  const what = s.workItem ? `#${s.workItem}` : s.prompt ? firstSentence(s.prompt) : ''
+  const title = kind === 'waiting' ? `Needs you: ${name}` : `Turn ended: ${name}`
+  const reason = { question: 'Has a question', plan: 'Plan to approve' }[s.waiting?.kind] || 'Waiting for you'
+  const body = kind === 'waiting'
+    ? (s.waiting.detail ? `${reason}: ${s.waiting.detail}` : reason)
+    : [`Ran ${dur(took)}`, what].filter(Boolean).join(' · ')
+  try {
+    // The tag keeps two open boards from showing the same notification twice.
+    const n = new Notification(title, { body: body.slice(0, 240), tag: `${s.sessionId}:${kind}:${s.stateSince}` })
+    n.onclick = () => {
+      window.focus()
+      n.close()
+      openDrawer(s.sessionId)
+    }
+  } catch {}
+}
+
 // ---- Poll -----------------------------------------------------------------
 
 let pollTimer = null
@@ -2199,6 +2294,7 @@ async function poll() {
   try {
     sessions = await loadSessions()
     render()
+    noteTransitions(sessions, Date.now())
     if (queueServed && !document.hidden) await loadQueue()
     status.className = 'status'
     status.innerHTML = `<span class="dot"></span>${clock(Date.now())}`
@@ -2213,9 +2309,10 @@ async function poll() {
 }
 
 // Back in view: catch up at once instead of waiting out the slow interval.
-document.addEventListener('visibilitychange', () => { if (!document.hidden) poll() })
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { renderNotify(); poll() } })
 
 markSort()
+renderNotify()
 loadPhases().then(poll)
 loadQueue()
 </script>

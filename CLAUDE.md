@@ -35,6 +35,10 @@ install it and how to serve the page. This file is for working on it.
   sessions in a sandbox write through a mount. Those are untrusted: `defang()`
   cleans each one before anything renders it, because the page puts some
   fields into HTML unescaped. The server never reads `sandboxed/`.
+  After each poll `noteTransitions` compares with the previous one and raises
+  a desktop notification (`notify`) for a new wait (keyed by `waiting.since`)
+  and, when **long turns** is on, for a turn of 3 min or more that ended. The
+  first poll only records. Permission is asked from the header's **turn on**.
   A session's `plan` draws as a strip above the tiles of its group (`planOf`
   checks its shape, `planHtml` draws it). Each item's state comes from the
   newest session reporting that work item, one outside a sandbox first.

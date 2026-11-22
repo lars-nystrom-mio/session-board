@@ -249,6 +249,20 @@ running subagent, the tools in flight with live timers, the subagents with
 their status, and context use, cost and turn count. Click a tile for the
 prompt, the agent list, the full timeline and a `claude --resume` line to copy.
 
+### Desktop notifications
+
+While you work in a terminal you won't see the tab's title or favicon change.
+Click **turn on** beside **notify** in the header and allow notifications, and
+the board raises a desktop notification when a session starts needing you: the
+project, the terminal tab's name and the reason (a question or a plan to
+approve, with its text). Clicking it brings the board forward with that
+session's drawer open. It notifies once per wait, and not for sessions that
+were already waiting when the page loaded. **long turns** adds one when a turn
+that ran 3 minutes or longer ends. **mute** silences both. Both stay set in the
+browser. A permission prompt still can't be seen (see the table above), and
+the page has to be open in a tab, served from `127.0.0.1` or `localhost`
+(browsers allow notifications only there or over HTTPS).
+
 On Windows a tile also shows the session's memory: its `claude.exe` plus
 everything it started (MCP servers, running shell commands), sampled once a
 minute through PowerShell, with a two-hour trend line. It turns orange at 1 GB.

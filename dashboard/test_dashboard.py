@@ -370,6 +370,94 @@ class MessagesView(unittest.TestCase):
         finally:
             path.write_text(json.dumps(before), encoding='utf-8')
 
+    # Desktop notifications, with the browser's Notification API stubbed out.
+    STUB = '''(() => {
+        window.notes = []
+        class N {
+            constructor(title, opts) { this.title = title; this.body = opts.body; this.tag = opts.tag; notes.push(this) }
+            close() { this.closed = true }
+        }
+        N.permission = localStorage.getItem('test.perm') || 'granted'
+        N.requestPermission = async () => (N.permission = 'granted')
+        window.Notification = N
+    })()'''
+
+    def notify_page(self, perm='granted', **stored):
+        self.page.close()
+        self.page = self.browser.new_page(viewport={'width': 1400, 'height': 1000})
+        self.page.on('pageerror', lambda e: self.errors.append(str(e)))
+        sets = ''.join(f"localStorage.setItem('{k}', '{v}');" for k, v in {'test.perm': perm, **stored}.items())
+        self.page.add_init_script(f'(() => {{ {sets} }})()')
+        self.page.add_init_script(self.STUB)
+        self.page.goto(self.url)
+        self.page.wait_for_selector(f'[data-session="{A}"]')
+        self.page.wait_for_timeout(300)
+
+    def rewrite(self, sid, **changes):
+        path = Path(self.dir.name) / 'sessions' / f'{sid}.json'
+        before = path.read_text(encoding='utf-8')
+        b = json.loads(before)
+        b.update(changes)
+        path.write_text(json.dumps(b), encoding='utf-8')
+        self.addCleanup(path.write_text, before, encoding='utf-8')
+
+    def notes(self):
+        return self.page.evaluate('notes.map((n) => ({title: n.title, body: n.body}))')
+
+    def test_a_session_that_starts_waiting_notifies_once_and_opens_its_drawer(self):
+        self.notify_page()
+        # O was already waiting on load: no notification for it.
+        self.assertEqual(self.notes(), [])
+        now = int(time.time() * 1000)
+        self.rewrite(F, state='waiting', stateSince=now, tabTitle='upgrade kit',
+                     waiting={'kind': 'question', 'detail': 'Which .NET version?', 'since': now})
+        self.page.wait_for_function('notes.length > 0')
+        self.page.wait_for_timeout(2500)  # another poll: still one
+        self.assertEqual(self.notes(), [{'title': 'Needs you: dotnet-upgrade-kit · upgrade kit',
+                                         'body': 'Has a question: Which .NET version?'}])
+        self.page.evaluate('notes[0].onclick()')
+        self.settled()
+        self.assertTrue(self.page.evaluate('notes[0].closed'))
+        self.assertIn('dotnet-upgrade-kit', self.page.inner_text('#d-sub'))
+        self.assertIn('Which .NET version?', self.page.inner_text('#d-body'))
+
+    def test_mute_silences_notifications_and_is_remembered(self):
+        self.notify_page()
+        self.page.click('#notify-mute')
+        self.assertEqual(self.page.get_attribute('#notify-mute', 'aria-pressed'), 'true')
+        self.assertEqual(self.page.evaluate("localStorage.getItem('sessionBoard.notifyMute')"), '1')
+        now = int(time.time() * 1000)
+        self.rewrite(F, state='waiting', stateSince=now, waiting={'kind': 'plan', 'detail': 'Go?', 'since': now})
+        self.page.wait_for_selector(f'.tile[data-session="{F}"] .ask')
+        self.page.wait_for_timeout(500)
+        self.assertEqual(self.notes(), [])
+
+    def test_a_long_turn_that_ends_notifies_only_when_asked_for(self):
+        # Off by default: S3's 15-minute turn ends without a notification.
+        self.notify_page()
+        self.assertEqual(self.page.get_attribute('#notify-long', 'aria-pressed'), 'false')
+        now = int(time.time() * 1000)
+        self.rewrite(S3, state='idle', stateSince=now, tools=[])
+        self.page.wait_for_function(f'''document.querySelector('.tile[data-session="{S3}"] .since').textContent.startsWith('idle')''')
+        self.page.wait_for_timeout(2500)
+        self.assertEqual(self.notes(), [])
+        # Turned on: S4's ends and notifies, with how long it ran.
+        self.page.click('#notify-long')
+        self.assertEqual(self.page.evaluate("localStorage.getItem('sessionBoard.notifyLong')"), '1')
+        self.rewrite(S4, state='idle', stateSince=int(time.time() * 1000), tools=[])
+        self.page.wait_for_function('notes.length > 0')
+        [note] = self.notes()
+        self.assertEqual(note['title'], 'Turn ended: pipelines · build ends')
+        self.assertRegex(note['body'], r'^Ran 15m( \d\ds)? · Fix the thing\.$')
+
+    def test_permission_is_asked_from_the_button_not_on_load(self):
+        self.notify_page(perm='default')
+        self.assertTrue(self.page.is_visible('#notify-ask'))
+        self.assertFalse(self.page.is_visible('#notify-mute'))
+        self.page.click('#notify-ask')
+        self.page.wait_for_selector('#notify-mute', state='visible')
+        self.assertFalse(self.page.is_visible('#notify-ask'))
+
 
 if __name__ == '__main__':
     unittest.main()
