@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
-import { STALE_BOARD_MS, removeScript, staleBoards, costDayOf, localDay, addMessage, crossSessionMessage, peerNotice, sendTarget, MAX_MESSAGES, boardStatus, progressOf, progressText, boardPlan, planWaiting, plannedWork, pruneShells, shellReported, shellToolDone, SHELL_MAX_MS, addPrs, adoOrgOf, cronFired, cronToolDone, nextCronMatch, pruneCrons, CRON_EXPIRY_MS, WAKEUP_ID, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, stepSeen, childLabel, deriveState, freshBoard, memoryOf, parseMachine, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, housekeepingCommand, summarize, toolLabel, trimAgents, workItemOf, skillTakesWorkItem, skillWorkItem, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
+import { STALE_BOARD_MS, removeScript, staleBoards, costDayOf, localDay, addMessage, crossSessionMessage, peerNotice, sendTarget, MAX_MESSAGES, boardStatus, progressOf, progressText, boardPlan, planWaiting, plannedWork, pruneShells, shellReported, shellToolDone, SHELL_MAX_MS, addPrs, adoOrgOf, cronFired, cronToolDone, nextCronMatch, pruneCrons, CRON_EXPIRY_MS, WAKEUP_ID, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, stepSeen, streamed, childLabel, deriveState, freshBoard, memoryOf, parseMachine, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, housekeepingCommand, summarize, toolLabel, trimAgents, workItemOf, skillTakesWorkItem, skillWorkItem, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
 
 describe('summaries', () => {
   test('a tool call becomes one short line', async () => {
@@ -409,6 +409,43 @@ describe('model steps', () => {
     expect(b.lastStepAt).toBe(100)
     stepSeen(b, undefined, 300)
     expect(b.lastStepAt).toBe(300)
+  })
+
+  test('streamed forwards a stream as yield* would and notes each chunk', async () => {
+    const got: unknown[] = []
+    async function* source() {
+      try {
+        got.push(yield 1)
+        got.push(yield 2)
+        return 'end'
+      } catch (err) {
+        got.push(`caught ${String(err)}`)
+        yield 9
+        return 'recovered'
+      } finally {
+        got.push('closed')
+      }
+    }
+    let n = 0
+    const all = streamed(source(), () => n++)
+    expect(await all.next()).toEqual({ value: 1, done: false })
+    expect(await all.next('a')).toEqual({ value: 2, done: false })
+    expect(await all.next('b')).toEqual({ value: 'end', done: true })
+    expect(got).toEqual(['a', 'b', 'closed'])
+    expect(n).toBe(2)
+
+    got.length = 0
+    const thrown = streamed(source(), () => { throw new Error('a bad note') })
+    await thrown.next()
+    expect(await thrown.throw('abort')).toEqual({ value: 9, done: false })
+    expect(await thrown.next()).toEqual({ value: 'recovered', done: true })
+    expect(got).toEqual(['caught abort', 'closed'])
+
+    got.length = 0
+    const closed = streamed(source(), () => {})
+    await closed.next()
+    await closed.return(undefined as never)
+    expect(got).toEqual(['closed'])
   })
 })
 
