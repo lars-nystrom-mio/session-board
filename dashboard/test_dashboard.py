@@ -438,13 +438,15 @@ class MessagesView(unittest.TestCase):
         window.Notification = N
     })()'''
 
-    def notify_page(self, perm='granted', **stored):
+    def notify_page(self, perm='granted', init='', **stored):
         self.page.close()
         self.page = self.browser.new_page(viewport={'width': 1400, 'height': 1000})
         self.page.on('pageerror', lambda e: self.errors.append(str(e)))
         sets = ''.join(f"localStorage.setItem('{k}', '{v}');" for k, v in {'test.perm': perm, **stored}.items())
         self.page.add_init_script(f'(() => {{ {sets} }})()')
         self.page.add_init_script(self.STUB)
+        if init:
+            self.page.add_init_script(init)
         self.page.goto(self.url)
         self.page.wait_for_selector(f'[data-session="{A}"]')
         self.page.wait_for_timeout(300)
@@ -554,6 +556,32 @@ class MessagesView(unittest.TestCase):
         self.page.wait_for_selector(f'.tile[data-session="{S6}"] .ask')
         self.page.wait_for_timeout(2500)
         self.assertEqual([n['title'] for n in self.notes()], ['Needs you: pipelines · repl test run'])
+
+    def test_a_hidden_tab_polls_from_a_worker_and_still_notifies(self):
+        # The page's own timers slow down in a hidden tab; the worker's don't.
+        # The test shortens the worker's wait so it needn't sit out 15 s.
+        self.notify_page(init='''(() => {
+            Object.defineProperty(Document.prototype, 'hidden', { configurable: true, get: () => !!window.testHidden })
+            window.workerWaits = []
+            const post = Worker.prototype.postMessage
+            Worker.prototype.postMessage = function (ms) {
+                if (ms > 0) workerWaits.push(ms)
+                return post.call(this, ms === 15000 ? 300 : ms)
+            }
+            window.pageWaits = []
+            const st = window.setTimeout
+            window.setTimeout = function (fn, ms, ...rest) { pageWaits.push(ms); return st.call(this, fn, ms, ...rest) }
+        })()''')
+        self.page.evaluate('testHidden = true; document.dispatchEvent(new Event("visibilitychange"))')
+        self.page.wait_for_function('workerWaits.length > 1')
+        now = int(time.time() * 1000)
+        self.rewrite(F, state='waiting', stateSince=now, waiting={'kind': 'question', 'detail': 'Which?', 'since': now})
+        self.page.wait_for_function('notes.length > 0', timeout=5000)
+        self.assertNotIn(15000, self.page.evaluate('pageWaits'))
+        self.assertEqual(set(self.page.evaluate('workerWaits')), {15000})
+        # Back in view: the page's own 2 s timer takes over again.
+        self.page.evaluate('testHidden = false; pageWaits.length = 0; document.dispatchEvent(new Event("visibilitychange"))')
+        self.page.wait_for_function('pageWaits.includes(2000)')
 
     def test_permission_is_asked_from_the_button_not_on_load(self):
         self.notify_page(perm='default')

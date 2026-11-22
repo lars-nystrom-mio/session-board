@@ -714,7 +714,7 @@
 
 <script>
 const POLL_MS = 2000
-const HIDDEN_POLL_MS = 15_000    // tab not visible: only the title and favicon update
+const HIDDEN_POLL_MS = 15_000    // tab not visible: only the title, favicon and notifications update
 const STALE_MS = 20_000          // no heartbeat for this long: the session is gone
 const HIDE_AFTER_MS = 24 * 3600_000
 const RECHECK_STALE_MS = 30_000  // how often to refetch a session without heartbeat
@@ -2410,10 +2410,31 @@ function notify(s, kind, took = 0) {
 
 let pollTimer = null
 let polling = false
+
+// Chrome and Edge slow a hidden tab's own timers to about once a minute after
+// a few minutes, which would hold a notification back that long. A dedicated
+// worker's timers aren't slowed that way, so one times the polls while the tab
+// is hidden. Without workers the page's own timer does.
+let pollWorker = null
+try {
+  const src = 'let t; onmessage = (e) => { clearTimeout(t); if (e.data > 0) t = setTimeout(() => postMessage(0), e.data) }'
+  pollWorker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })))
+  pollWorker.onmessage = () => poll()
+  pollWorker.onerror = () => { pollWorker = null; if (!polling) schedulePoll() }
+} catch { pollWorker = null }
+
+function schedulePoll() {
+  clearTimeout(pollTimer)
+  pollWorker?.postMessage(0)
+  if (document.hidden && pollWorker) pollWorker.postMessage(HIDDEN_POLL_MS)
+  else pollTimer = setTimeout(poll, document.hidden ? HIDDEN_POLL_MS : POLL_MS)
+}
+
 async function poll() {
   if (polling) return
   polling = true
   clearTimeout(pollTimer)
+  pollWorker?.postMessage(0)
   const status = $('status')
   try {
     sessions = await loadSessions()
@@ -2429,7 +2450,7 @@ async function poll() {
     status.innerHTML = `<span class="dot"></span>${esc(err.message)}`
   } finally {
     polling = false
-    pollTimer = setTimeout(poll, document.hidden ? HIDDEN_POLL_MS : POLL_MS)
+    schedulePoll()
   }
 }
 
