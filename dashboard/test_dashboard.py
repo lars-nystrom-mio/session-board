@@ -44,6 +44,9 @@ Y = 'cccccccc-0000-4000-8000-00000000000c'  # in a sandbox, with a hostile plan
 S1 = 'dddddddd-0000-4000-8000-00000000000d'  # running, a Bash call past its limit
 S2 = 'eeeeeeee-0000-4000-8000-00000000000e'  # running, nothing in flight and nothing new
 S3 = 'ffffffff-0000-4000-8000-00000000000f'  # running, a Bash call well within its limit
+S4 = 'dddddddd-1111-4000-8000-00000000000d'  # running, a long build that the test lets end
+S5 = 'eeeeeeee-1111-4000-8000-00000000000e'  # running, a background agent's Bash past its limit
+S6 = 'ffffffff-1111-4000-8000-00000000000f'  # running, a REPL script awaiting a test run
 
 
 def stalls(now):
@@ -56,7 +59,16 @@ def stalls(now):
     build = board(S3, 'C:\\Workspace\\pipelines', 'running', 'long build', now=now)
     build.update(stateSince=now - 15 * MIN, promptAt=now - 16 * MIN)
     build['tools'] = [{'id': 't3', 'tool': 'Bash', 'summary': 'dotnet build', 'since': now - 12 * MIN}]
-    return [hung, quiet, build]
+    ended = board(S4, 'C:\\Workspace\\pipelines', 'running', 'build ends', now=now)
+    ended.update(stateSince=now - 15 * MIN, promptAt=now - 16 * MIN,
+                 events=[{'t': now - 14 * MIN, 'kind': 'tool', 'text': 'Bash · dotnet build'}])
+    ended['tools'] = [{'id': 't4', 'tool': 'Bash', 'summary': 'dotnet build', 'since': now - 14 * MIN}]
+    bg = board(S5, 'C:\\Workspace\\pipelines', 'running', 'background watcher', now=now)
+    bg['agents'] = [{'key': 'k5', 'agentId': 'bg5', 'type': 'general-purpose', 'description': 'watch', 'status': 'running', 'since': now - 26 * MIN}]
+    bg['tools'] = [{'id': 't5', 'tool': 'Bash', 'summary': 'az pipelines runs show --wait', 'agentId': 'bg5', 'since': now - 25 * MIN}]
+    repl = board(S6, 'C:\\Workspace\\pipelines', 'running', 'repl test run', now=now)
+    repl['tools'] = [{'id': 't6', 'tool': 'REPL', 'summary': 'npm test', 'since': now - 7 * MIN}]
+    return [hung, quiet, build, ended, bg, repl]
 
 
 def plans(now):
@@ -315,7 +327,7 @@ class MessagesView(unittest.TestCase):
             self.assertTrue(self.tile(sid).locator('.since').inner_text().startswith(word))
         # Only the overdue tool is marked, and a tool in flight within its limit isn't a stall.
         self.assertEqual(self.tile(S1).locator('.act.over').count(), 1)
-        for sid in (S3, A, P):
+        for sid in (S3, S5, S6, A, P):
             self.assertNotIn('stalled', self.tile(sid).get_attribute('class'))
         # Its own colour, and the sweep stops.
         look = lambda sid: self.tile(sid).evaluate('''(t) => [getComputedStyle(t).borderTopColor,
@@ -329,6 +341,21 @@ class MessagesView(unittest.TestCase):
         self.tile(S1).click()
         self.settled()
         self.assertIn('looks stalled: Bash has run longer than 20 min', self.page.inner_text('#d-body'))
+
+    def test_a_tool_that_ends_counts_as_activity(self):
+        # The build ends: it leaves `tools` and writes no event, so the file's
+        # newest time is 14 minutes old. The page saw the change, so no stall.
+        path = Path(self.dir.name) / 'sessions' / f'{S4}.json'
+        b = json.loads(path.read_text(encoding='utf-8'))
+        before = dict(b)
+        b['tools'] = []
+        path.write_text(json.dumps(b), encoding='utf-8')
+        try:
+            self.page.wait_for_function(f'''!document.querySelector('.tile[data-session="{S4}"] .act:not(.past):not(.last)')''')
+            self.page.wait_for_timeout(2500)
+            self.assertNotIn('stalled', self.tile(S4).get_attribute('class'))
+        finally:
+            path.write_text(json.dumps(before), encoding='utf-8')
 
 
 if __name__ == '__main__':

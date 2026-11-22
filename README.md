@@ -237,7 +237,7 @@ from any page but the board itself.
 | **needs you** (pink, glowing, sorted first) | a question or a plan waiting for approval (not a permission prompt: Claude Code skips the hooks that would see one) |
 | **running** (cyan sweep) | the main loop is working on a prompt |
 | **agents running** (purple sweep) | your turn is over, but background subagents are still working |
-| **stalled** (yellow, the sweep stops) | still running and its heartbeat arrives, but a tool has run past its limit (Bash and PowerShell 20 min, Agent 60 min, WebFetch and WebSearch 3 min, others 5 min), or nothing is in flight and nothing new has happened for 10 min. The limits are `TOOL_LIMIT_MS` and `STALL_MS` in `dashboard/index.html` |
+| **stalled** (yellow, the sweep stops) | still running and its heartbeat arrives, but a main-loop tool has run past its limit (Bash, PowerShell and REPL 20 min, Poll, Agent and Workflow 60 min, WebFetch and WebSearch 3 min, others 5 min), or nothing is in flight and the page has seen nothing new for 10 min. The limits are `TOOL_LIMIT_MS` and `STALL_MS` in `dashboard/index.html` |
 | **idle** | done, your move |
 | ended / no heartbeat | under "Ended or gone"; no heartbeat for 20 s means the session crashed or was closed |
 

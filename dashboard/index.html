@@ -1252,25 +1252,48 @@ const isStale = (s) => s.state !== 'ended' && Date.now() - s.updatedAt > STALE_M
 // STALL_MS. Limits are by tool name as the tile shows it; edit them here.
 const STALL_MS = 10 * 60_000
 const TOOL_LIMIT_MS = {
-  Bash: 20 * 60_000, PowerShell: 20 * 60_000,  // builds and test runs take a while
-  Agent: 60 * 60_000, Task: 60 * 60_000,        // a foreground subagent, whose own tools show too
+  Bash: 20 * 60_000, PowerShell: 20 * 60_000, REPL: 20 * 60_000,  // builds and test runs take a while
+  TaskOutput: 20 * 60_000,
+  Poll: 60 * 60_000,                                    // waits for events, up to the prompt cache's expiry
+  Agent: 60 * 60_000, Task: 60 * 60_000, Workflow: 60 * 60_000,  // a foreground subagent, whose own tools show too
   WebFetch: 3 * 60_000, WebSearch: 3 * 60_000,
 }
 const TOOL_LIMIT_DEFAULT_MS = 5 * 60_000
 const mins = (ms) => `${Math.round(ms / 60_000)} min`
 const toolLimit = (t) => TOOL_LIMIT_MS[t.tool] ?? TOOL_LIMIT_DEFAULT_MS
-const lastActivity = (s) => Math.max(s.stateSince, s.promptAt ?? 0, s.events.at(-1)?.t ?? 0,
-  ...s.tools.map((t) => t.since), ...s.agents.map((a) => Math.max(a.since ?? 0, a.endedAt ?? 0)))
+const newest = (list, key) => list?.reduce((m, x) => Math.max(m, x?.[key] ?? 0), 0) ?? 0
 
-// null, or { since, tool?, limit?, text } for a stalled session.
+// Not everything a session does leaves a time in its file: a tool that ends,
+// or a Read or Grep, which writes no event, just drops out of `tools`. So the
+// page also notes when it last saw a session's file change in anything but its
+// heartbeat, starting from the newest time the file itself holds.
+const seen = new Map()  // sessionId -> { sig, at }
+function noteActivity(s, now) {
+  const sig = JSON.stringify([s.state, s.turns, s.tools.map((t) => t.id), s.events.length, s.events.at(-1)?.t,
+    s.agents.map((a) => [a.key, a.status, a.lastTool]), s.messages?.length, s.shells?.map((b) => b.id), s.prs?.length])
+  const was = seen.get(s.sessionId)
+  if (was?.sig === sig) return
+  const fromFile = Math.max(s.stateSince, s.promptAt ?? 0, newest(s.events, 't'), newest(s.tools, 'since'),
+    newest(s.agents, 'since'), newest(s.agents, 'endedAt'), newest(s.messages, 't'), newest(s.shells, 'since'), newest(s.prs, 'at'))
+  seen.set(s.sessionId, { sig, at: was ? now : fromFile })
+}
+
+// null, or { since, tool?, text } for a stalled session. Only the main loop's
+// tools, and a foreground subagent's while the main loop waits on it, can be
+// overdue: a background agent's slow tool doesn't hold up the session.
 function stallOf(s, now = Date.now()) {
   if (s.state !== 'running' || isStale(s)) return null
-  const over = s.tools.filter((t) => now - t.since > toolLimit(t)).sort((a, b) => a.since - b.since)[0]
+  const waitsOnAgent = s.tools.some((t) => !t.agentId && (t.tool === 'Agent' || t.tool === 'Task'))
+  const over = s.tools.filter((t) => (!t.agentId || waitsOnAgent) && now - t.since > toolLimit(t)).sort((a, b) => a.since - b.since)[0]
   if (over) return { since: over.since, tool: over, text: `${over.tool} has run longer than ${mins(toolLimit(over))}` }
   if (s.tools.length) return null
-  const last = lastActivity(s)
+  const last = seen.get(s.sessionId)?.at ?? s.stateSince
   return now - last > STALL_MS ? { since: last, text: `nothing new for over ${mins(STALL_MS)}` } : null
 }
+
+// Worked out once per render, so a tile, its class and the drawer agree.
+let stalls = new Map()  // sessionId -> stallOf()
+
 const projectOf = (s) => s.repo?.name || s.project || s.cwd
 const shortModel = (m) => (m || '').replace(/^claude-/, '').replace(/\[.*\]$/, '')
 
@@ -1321,7 +1344,7 @@ function titleOf(s) {
 
 function tileHtml(s) {
   const stale = isStale(s)
-  const stall = stallOf(s)
+  const stall = stalls.get(s.sessionId)
   // Two axes: the activity (state dot, phase) and the task, which only the
   // model sets with board_status. Done stands through follow-up prompts.
   const phase = s.done && s.state === 'idle' ? null : phaseOf(s)
@@ -1634,6 +1657,8 @@ function toggleGroup(id) {
 
 function render() {
   const now = Date.now()
+  for (const s of sessions) noteActivity(s, now)
+  stalls = new Map(sessions.map((s) => [s.sessionId, stallOf(s, now)]))
   const active = sessions.filter((s) => s.state !== 'ended' && !isStale(s))
   const past = sessions.filter((s) => (s.state === 'ended' || isStale(s)) && now - s.updatedAt < HIDE_AFTER_MS)
   // Never sort on heartbeats or busy/idle: they change every few seconds and
@@ -1714,7 +1739,7 @@ function render() {
       t = { el, html: '', lastEvent: null }
       tiles.set(s.sessionId, t)
     }
-    const cls = `tile s-${s.state}${isStale(s) ? ' stale' : ''}${stallOf(s) ? ' stalled' : ''}`
+    const cls = `tile s-${s.state}${isStale(s) ? ' stale' : ''}${stalls.get(s.sessionId) ? ' stalled' : ''}`
     if (t.el.className.replace(/\s*blip/, '') !== cls) t.el.className = cls
     const html = tileHtml(s)
     if (html !== t.html) { t.el.innerHTML = html; t.html = html; t.fitW = -1 }
@@ -1816,7 +1841,7 @@ function cacheDrawerText(s) {
 function drawerHtml(s) {
   const out = []
   out.push(`<h3>Session</h3><dl class="kv">
-    <dt>state</dt><dd>${esc(isStale(s) ? 'no heartbeat' : STATE_WORD[s.state])}${s.endReason ? ` (${esc(s.endReason)})` : ''}${stallOf(s) ? `<span style="color:var(--stall)"> · looks stalled: ${esc(stallOf(s).text)}</span>` : ''}</dd>
+    <dt>state</dt><dd>${esc(isStale(s) ? 'no heartbeat' : STATE_WORD[s.state])}${s.endReason ? ` (${esc(s.endReason)})` : ''}${stalls.get(s.sessionId) ? `<span style="color:var(--stall)"> · looks stalled: ${esc(stalls.get(s.sessionId).text)}</span>` : ''}</dd>
     <dt>directory</dt><dd>${esc(s.cwd)}</dd>
     ${s.repo?.remote ? `<dt>remote</dt><dd>${esc(s.repo.remote)}</dd>` : ''}
     ${s.tabTitle ? `<dt>terminal tab</dt><dd>${esc(s.tabTitle)}</dd>` : ''}
