@@ -395,7 +395,8 @@ async function boardStatusCalled($: EngineInterface, input: Record<string, unkno
   const reply = boardStatus(b, input, now())
   if (input.status === 'done' && b.done) event('turn', `done${b.done.note ? `: ${b.done.note}` : ''}`)
   else if (input.status === 'working') event('turn', 'working again')
-  if (b.progress && b.progress !== before) event('turn', `progress: ${progressText(b.progress)}`)
+  // A skill may repeat the same report; only a change goes on the timeline.
+  if (b.progress && (!before || progressText(b.progress) !== progressText(before))) event('turn', `progress: ${progressText(b.progress)}`)
   schedule($)
   return reply
 }

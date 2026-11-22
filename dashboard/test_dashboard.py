@@ -90,11 +90,13 @@ def plans(now):
     p.update(workItem='30281', skill={'name': 'work-item-delivery', 'args': '30281', 'at': now - 9 * MIN},
              progress={'at': now - MIN, 'phase': 'Reviewing', 'step': 3, 'of': 7, 'workItem': '30281'})
     q = board(Q, edi, 'idle', 'deliver 30277', now=now)
-    q.update(workItem='30277', done={'at': now - 2 * MIN, 'note': 'merged'})
+    q.update(workItem='30277', done={'at': now - 2 * MIN, 'note': 'merged'},
+             progress={'at': now - 3 * MIN, 'phase': 'Implementing', 'step': 9, 'of': 3})
     y = board(Y, 'C:\\sandbox\\x', 'idle', 'boxed plan', now=now)
     y['plan'] = {'title': '<img src=x onerror=alert(1)>', 'gate': None,
                  'items': [{'workItem': '<b>1</b>', 'title': '"><script>bad()</script>', 'type': 'constructor', 'start': '<i>'}]}
     y['progress'] = {'at': now, 'phase': '<img src=x onerror=alert(1)>', 'step': '<b>2</b>', 'of': 3}
+    y['state'] = 'running'
     return [o, p, q], y
 
 
@@ -312,6 +314,11 @@ class MessagesView(unittest.TestCase):
         self.assertNotIn('2', boxed.text_content())
         # Without a report the tile keeps the inferred phase.
         self.assertNotIn('reported', self.tile(G).locator('.title').inner_html())
+        # An idle session's report may describe work that stopped: the tile drops it, the drawer keeps it.
+        self.assertEqual(self.tile(Q).locator('.phase.reported').count(), 0)
+        self.tile(Q).click()
+        self.settled()
+        self.assertIn('Implementing · step 9', self.page.locator('#d-body .progress').inner_text())
 
     def test_a_full_tile_keeps_the_height_and_cuts_nothing(self):
         # 370px of viewport leaves the narrowest tile the grid allows.

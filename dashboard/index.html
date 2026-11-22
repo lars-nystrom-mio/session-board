@@ -760,7 +760,7 @@ async function loadSessions() {
 
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const NUMBER_KEYS = new Set(['startedAt', 'updatedAt', 'stateSince', 'promptAt', 'at', 'since', 'until', 't',
-  'turns', 'costUsd', 'percent', 'tokens', 'window', 'nextAt', 'firedAt', 'endedAt', 'createdAt', 'offsetMs', 'number', 'step', 'of'])
+  'turns', 'costUsd', 'percent', 'tokens', 'window', 'nextAt', 'firedAt', 'endedAt', 'createdAt', 'offsetMs', 'number'])
 const LIST_KEYS = ['prs', 'tools', 'agents', 'events', 'crons', 'shells', 'messages']
 const TEXT_KEYS = ['cwd', 'project', 'branch', 'tabTitle', 'model', 'prompt', 'workItem', 'activeSkill', 'endReason']
 
@@ -1317,9 +1317,11 @@ function phaseOf(s) {
 function progressText(s) {
   const p = s.progress
   if (!p || typeof p !== 'object') return null
-  const n = (v) => (Number.isInteger(v) && v > 0 ? v : null)
-  const step = n(p.step), of = n(p.of)
-  const parts = [typeof p.phase === 'string' ? p.phase : '', step === null ? '' : of === null ? `step ${step}` : `${step}/${of}`,
+  // A sandboxed file never went through progressOf, so the same rules apply here.
+  const n = (v) => (Number.isInteger(v) && v > 0 && v <= 9999 ? v : null)
+  const step = n(p.step), of = step !== null && n(p.of) >= step ? n(p.of) : null
+  const phase = typeof p.phase === 'string' ? p.phase.replace(/\s+/g, ' ').trim().slice(0, 60) : ''
+  const parts = [phase, step === null ? '' : of === null ? `step ${step}` : `${step}/${of}`,
     typeof p.workItem === 'string' && p.workItem ? '#' + p.workItem : '']
   return parts.filter(Boolean).join(' · ') || null
 }
@@ -1368,7 +1370,10 @@ function tileHtml(s) {
   // Two axes: the activity (state dot, phase) and the task, which only the
   // model sets with board_status. Done stands through follow-up prompts.
   // What the session reported comes first; the phase inferred from subagents is the fallback.
-  const reported = s.done && s.state === 'idle' ? null : progressText(s)
+  // only while the session is at work: an idle or gone session's report may
+  // describe work that stopped (the drawer still shows it, with its time).
+  const atWork = !stale && (s.state === 'running' || s.state === 'waiting' || s.state === 'background')
+  const reported = atWork ? progressText(s) : null
   const phase = reported ?? (s.done && s.state === 'idle' ? null : phaseOf(s))
   const after = s.done ? s.events.filter((e) => e.kind === 'prompt' && e.t > s.done.at).length : 0
   const done = s.done

@@ -856,7 +856,8 @@ export function progressOf(input: Record<string, unknown>, now: number): Progres
   const step = count(input.step)
   let of = count(input.of)
   if (of !== null && (step === null || of < step)) of = null
-  const workItem = clip(str(input.workItem).trim().replace(/^#/, ''), 40) || null
+  const id = typeof input.workItem === 'number' && Number.isInteger(input.workItem) ? String(input.workItem) : str(input.workItem)
+  const workItem = clip(id.trim().replace(/^#/, ''), 40) || null
   if (!phase && step === null && !workItem) return null
   return { at: now, phase, step, of, workItem }
 }
@@ -882,7 +883,8 @@ export function boardStatus(board: Board, input: Record<string, unknown>, now: n
     board.progress = null
     return (
       'Recorded: done. The board frees this session for the next queued work item once the turn ends. ' +
-      'Follow-ups do not undo it; call "working" only if the task is reopened.'
+      'Follow-ups do not undo it; call "working" only if the task is reopened.' +
+      (reported ? ' Progress is not kept with done; the report is cleared.' : '')
     )
   }
   if (status === null && !progress) {
@@ -898,7 +900,10 @@ export function boardStatus(board: Board, input: Record<string, unknown>, now: n
   if (progress) {
     board.progress = progress
     said.push('Recorded progress. It does not mark the task done.')
+  } else if (reported) {
+    said.push('Nothing usable in phase, step or workItem; no progress recorded.')
   }
+  if (status === null && note) said.push('A note is only kept with a status; it was not recorded.')
   return said.join(' ')
 }
 

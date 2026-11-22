@@ -485,10 +485,18 @@ describe('board_status', () => {
     expect(board.progress ?? null).toBe(null)
   })
 
+  test('the reply says what it did not keep', () => {
+    const board = freshBoard('s1', '/x', 0)
+    expect(boardStatus(board, { status: 'done', phase: 'Merged' }, 1)).toMatch(/report is cleared/)
+    expect(boardStatus(board, { phase: 'Reviewing', note: 'x' }, 2)).toMatch(/note is only kept with a status/)
+    expect(boardStatus(board, { status: 'working', phase: ' ' }, 3)).toMatch(/no progress recorded/)
+  })
+
   test('progressOf cleans what the model sends', () => {
     expect(progressOf({ step: '2', of: 1, phase: 'a\n  b' }, 1)).toEqual({ at: 1, phase: 'a b', step: 2, of: null, workItem: null })
     expect(progressOf({ of: 7 }, 1)).toBe(null) // a total alone says nothing
-    expect(progressOf({ step: 1.5, workItem: 12 }, 1)).toBe(null)
+    expect(progressOf({ step: 1.5, workItem: 1.5 }, 1)).toBe(null)
+    expect(progressOf({ workItem: 25229 }, 1)?.workItem).toBe('25229')
     expect(progressOf({ phase: 'x'.repeat(100) }, 1)?.phase.length).toBeLessThanOrEqual(60)
   })
 
