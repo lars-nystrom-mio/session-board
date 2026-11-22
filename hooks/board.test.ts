@@ -750,6 +750,19 @@ describe('old status files', () => {
     expect(staleBoards(files, 'self', now)).toEqual(['old.json'])
   })
 
+  test('each project keeps its newest file, so the queue still lists it', async () => {
+    const week = now - STALE_BOARD_MS
+    const of = (updatedAt: number, cwd: string, root?: string) => JSON.stringify({ updatedAt, cwd, repo: root ? { root } : null })
+    const files = [
+      { name: 'a-old.json', text: of(week - 9_000, 'C:\\repo\\a\\sub', 'C:\\repo\\a') },
+      { name: 'a-newer.json', text: of(week - 5_000, 'c:/Repo/A/') },
+      { name: 'b-only.json', text: of(week - 9_000, 'C:\\scratch\\b') },
+      { name: 'c-old.json', text: of(week - 9_000, 'C:\\c') },
+      { name: 'c-live.json', text: of(now - 1_000, 'C:\\c') },
+    ]
+    expect(staleBoards(files, 'self', now).sort()).toEqual(['a-old.json', 'c-old.json'])
+  })
+
   test('unreadable, unparsable and foreign files are left alone', async () => {
     const old = at(now - STALE_BOARD_MS - 1)
     const files = [
@@ -765,9 +778,11 @@ describe('old status files', () => {
     expect(staleBoards(files, 'self', now)).toEqual([])
   })
 
-  test('the delete command quotes every path', async () => {
+  test('the delete command quotes every path and checks the age again', async () => {
     const curly = String.fromCodePoint(0x2019)
-    expect(removeScript(['C:/b/sessions/a.json', "C:/O'Neil/s/b.json", `C:/x${curly}y/c.json`]))
-      .toBe(`Remove-Item -LiteralPath 'C:/b/sessions/a.json','C:/O''Neil/s/b.json','C:/x${curly}${curly}y/c.json' -Force -ErrorAction SilentlyContinue`)
+    const script = removeScript(['C:/b/sessions/a.json', "C:/O'Neil/s/b.json", `C:/x${curly}y/c.json`])
+    expect(script.startsWith(`Get-Item -LiteralPath 'C:/b/sessions/a.json','C:/O''Neil/s/b.json','C:/x${curly}${curly}y/c.json' `)).toBe(true)
+    expect(script).toContain(`LastWriteTime -lt (Get-Date).AddMilliseconds(-${STALE_BOARD_MS})`)
+    expect(script.endsWith('; exit 0')).toBe(true)
   })
 })

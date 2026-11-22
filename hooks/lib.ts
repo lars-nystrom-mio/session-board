@@ -1255,26 +1255,44 @@ export const isBoardFileName = (name: string) => /^[A-Za-z0-9_-]+\.json$/.test(n
 
 // The status files to delete: last written more than a week ago, never this
 // session's own, and never one that can't be read or has no updatedAt (it may
-// be caught mid-write, or not be a status file at all).
+// be caught mid-write, or not be a status file at all). The newest file of
+// each project stays too: the server's project list (`known_projects`, the
+// queue form and **+**) comes from these files alone, keyed the same way, by
+// the repo's root or else the cwd.
 export function staleBoards(files: { name: string; text: string | null }[], self: string, now: number): string[] {
-  const stale: string[] = []
+  const read: { name: string; at: number; project: string | null }[] = []
   for (const f of files) {
     if (!isBoardFileName(f.name) || f.name === `${self}.json` || f.text === null) continue
-    let updatedAt: unknown
+    let b: { updatedAt?: unknown; cwd?: unknown; repo?: { root?: unknown } | null } | null
     try {
-      updatedAt = (JSON.parse(f.text) as { updatedAt?: unknown } | null)?.updatedAt
+      b = JSON.parse(f.text) as typeof b
     } catch {
       continue
     }
-    if (typeof updatedAt === 'number' && now - updatedAt > STALE_BOARD_MS) stale.push(f.name)
+    if (!b || typeof b.updatedAt !== 'number') continue
+    const path = typeof b.repo?.root === 'string' && b.repo.root ? b.repo.root : b.cwd
+    read.push({ name: f.name, at: b.updatedAt, project: typeof path === 'string' && path ? projectKey(path) : null })
   }
-  return stale
+  const newest = new Map<string, string>()
+  for (const r of [...read].sort((a, b) => a.at - b.at)) if (r.project) newest.set(r.project, r.name)
+  const kept = new Set(newest.values())
+  return read.filter((r) => now - r.at > STALE_BOARD_MS && !kept.has(r.name)).map((r) => r.name)
 }
 
-// A PowerShell command that deletes these files and is quiet about ones that
-// are gone already (another session starting at the same time). PowerShell
-// reads the curly single quotes as quotes too, so each is doubled like '.
+// A folder as `known_projects` in serve.py tells them apart on Windows: case
+// and slash direction don't count.
+function projectKey(path: string): string {
+  return path.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+}
+
+// A PowerShell command that deletes these files. It checks each file's age
+// again first, since a session resumed after the files were read writes its
+// own file afresh. It is quiet about files that are gone already (another
+// session starting at the same time) and exits 0 once it ran. PowerShell reads
+// the curly single quotes as quotes too, so each is doubled like '.
 export function removeScript(paths: string[]): string {
   const quoted = paths.map((p) => `'${p.replace(/['\u{2018}\u{2019}\u{201A}\u{201B}]/gu, (q) => q + q)}'`).join(',')
-  return `Remove-Item -LiteralPath ${quoted} -Force -ErrorAction SilentlyContinue`
+  return `Get-Item -LiteralPath ${quoted} -ErrorAction SilentlyContinue | ` +
+    `Where-Object { $_.LastWriteTime -lt (Get-Date).AddMilliseconds(-${STALE_BOARD_MS}) } | ` +
+    `Remove-Item -Force -ErrorAction SilentlyContinue; exit 0`
 }
