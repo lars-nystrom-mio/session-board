@@ -1,3 +1,6 @@
 # Written by Claude Code when it loads the mod: the API types and a tsconfig for the editor.
 .claude-plugin/types/
 __pycache__/
+# Claude Code's worktrees and scheduler lock for sessions in this folder.
+.claude/worktrees/
+.claude/scheduled_tasks.lock

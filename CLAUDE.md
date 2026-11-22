@@ -21,6 +21,8 @@ install it and how to serve the page. This file is for working on it.
   as live on the same 60 s rule as `GONE_MS` in `serve.py`.
   `board_plan` (deferred too) lets an orchestrating session put its plan of
   work items into its status file (`plan`, cleaned by `boardPlan` in `lib.ts`).
+  The `gh-orchestrate-delivery` skill calls it when it shows its plan, after
+  the go, and whenever the plan changes.
   While the plan has a `gate`, each main turn's end leaves the session waiting
   (`planWaiting`), and the person's next prompt clears the gate.
 - `hooks/lib.ts`: the status file's shape (`Board`) and pure helpers. Keep
@@ -212,9 +214,6 @@ SESSION_BOARD_DIR=<scratch dir> claude -p --plugin-dir . --model haiku "<prompt 
   its session id, and no API gives it. The page learns it by pairing a sent
   message with its receipt in another file (`buildFlows`).
 
-- That an orchestrate skill calls `board_plan` with its plan and again when
-  the plan changes. The skill has to be told to; nothing here makes it.
-
 ## Not verified yet (messages)
 
 - That `session.receive`'s `text` carries the `<cross-session-message>`
@@ -223,5 +222,4 @@ SESSION_BOARD_DIR=<scratch dir> claude -p --plugin-dir . --model haiku "<prompt 
 
 ## Ideas not built
 
-- Delete status files of long-ended sessions. `$.fs` has no delete, so this
-  would need `$.process.run`, or the dashboard keeps hiding them after 24 h.
+Open ideas and follow-ups are GitHub issues, not lines here.
