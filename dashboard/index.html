@@ -2213,8 +2213,11 @@ try {
   notifyMute = !!localStorage.getItem('sessionBoard.notifyMute')
   notifyLong = !!localStorage.getItem('sessionBoard.notifyLong')
 } catch {}
-const waitNoted = new Map()  // sessionId -> waiting.since already notified (or there on load)
-const turnFrom = new Map()   // sessionId -> when its running turn started
+const waitNoted = new Map()  // sessionId -> waiting.since already notified
+const turns = new Map()      // sessionId -> { ms, from }: a turn's working time so far, and its open stretch
+const lastSeen = new Map()   // sessionId -> when a poll last listed it
+const FORGET_MS = 60_000     // a file can miss a poll (read mid-write): keep what we know this long
+const loadedAt = Date.now()
 let notifyPrimed = false
 
 function renderNotify() {
@@ -2233,30 +2236,39 @@ function setNotify(key, on) {
   renderNotify()
 }
 
-// Runs after every poll, the tab hidden or not.
+// Runs after every poll, the tab hidden or not. Sandboxed files never notify:
+// anything in them may be made up to look like one of your sessions.
 function noteTransitions(list, now) {
-  const ids = new Set(list.map((s) => s.sessionId))
-  for (const m of [waitNoted, turnFrom]) for (const id of [...m.keys()]) if (!ids.has(id)) m.delete(id)
+  for (const s of list) lastSeen.set(s.sessionId, now)
+  for (const [id, at] of lastSeen) {
+    if (now - at > FORGET_MS) { lastSeen.delete(id); waitNoted.delete(id); turns.delete(id) }
+  }
   for (const s of list) {
+    if (s.sandboxed) continue
     const id = s.sessionId
     const live = s.state !== 'ended' && !isStale(s)
+    // A wait that began before the page loaded was already there: no notification.
     if (s.state === 'waiting' && s.waiting) {
       const key = s.waiting.since ?? s.stateSince
       if (waitNoted.get(id) !== key) {
         waitNoted.set(id, key)
-        if (notifyPrimed && live) notify(s, 'waiting')
+        if (live && key > loadedAt) notify(s, 'waiting')
       }
     } else {
       waitNoted.delete(id)
     }
-    // A turn runs from when the page sees it running until it leaves running
-    // for anything but a wait for you, which is part of the same turn.
-    if (s.state === 'running') {
-      if (!turnFrom.has(id)) turnFrom.set(id, s.stateSince || now)
-    } else if (s.state !== 'waiting' && turnFrom.has(id)) {
-      const took = (s.stateSince || now) - turnFrom.get(id)
-      turnFrom.delete(id)
-      if (notifyPrimed && notifyLong && took >= LONG_TURN_MS) notify(s, 'turn', took)
+    // A turn lasts while the main loop or its background agents work. A wait
+    // for you pauses it without counting; idle or ended closes it.
+    const at = s.stateSince || now
+    const turn = turns.get(id)
+    if (s.state === 'running' || s.state === 'background') {
+      if (!turn) turns.set(id, { ms: 0, from: at })
+      else if (turn.from == null) turn.from = at
+    } else if (turn) {
+      if (turn.from != null) { turn.ms += Math.max(0, at - turn.from); turn.from = null }
+      if (s.state === 'waiting') continue
+      turns.delete(id)
+      if (notifyPrimed && notifyLong && turn.ms >= LONG_TURN_MS) notify(s, 'turn', turn.ms)
     }
   }
   notifyPrimed = true
@@ -2295,6 +2307,7 @@ async function poll() {
     sessions = await loadSessions()
     render()
     noteTransitions(sessions, Date.now())
+    renderNotify()
     if (queueServed && !document.hidden) await loadQueue()
     status.className = 'status'
     status.innerHTML = `<span class="dot"></span>${clock(Date.now())}`

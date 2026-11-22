@@ -450,6 +450,39 @@ class MessagesView(unittest.TestCase):
         self.assertEqual(note['title'], 'Turn ended: pipelines · build ends')
         self.assertRegex(note['body'], r'^Ran 15m( \d\ds)? · Fix the thing\.$')
 
+    def test_a_sandboxed_session_never_notifies(self):
+        self.notify_page()
+        path = Path(self.dir.name) / 'sandboxed' / f'{X}.json'
+        before = path.read_text(encoding='utf-8')
+        self.addCleanup(path.write_text, before, encoding='utf-8')
+        b = json.loads(before)
+        now = int(time.time() * 1000)
+        b.update(state='waiting', stateSince=now, waiting={'kind': 'plan', 'detail': 'Approve deploy', 'since': now})
+        path.write_text(json.dumps(b), encoding='utf-8')
+        self.page.wait_for_selector(f'.tile[data-session="{X}"] .ask')
+        self.page.wait_for_timeout(500)
+        self.assertEqual(self.notes(), [])
+
+    def test_a_turn_counts_its_background_agents_but_not_a_wait_for_you(self):
+        self.notify_page(**{'sessionBoard.notifyLong': '1'})
+        now = int(time.time() * 1000)
+        # S3 ran 15 minutes, then waits for you: no "turn ended", and the wait doesn't count.
+        self.rewrite(S3, state='waiting', stateSince=now, tools=[], waiting={'kind': 'question', 'detail': 'Which?', 'since': now})
+        self.page.wait_for_function('notes.length === 1')
+        later = now + 40 * MIN
+        self.rewrite(S3, state='running', stateSince=later, waiting=None)
+        self.page.wait_for_function(f'''document.querySelector('.tile[data-session="{S3}"] .since').textContent.includes('running')''')
+        # Agents still run after the main loop stops: the turn goes on.
+        self.rewrite(S3, state='background', stateSince=later + MIN)
+        self.page.wait_for_function(f'''document.querySelector('.tile[data-session="{S3}"] .since').textContent.includes('agents')''')
+        self.page.wait_for_timeout(500)
+        self.assertEqual(len(self.notes()), 1)
+        self.rewrite(S3, state='idle', stateSince=later + 3 * MIN)
+        self.page.wait_for_function('notes.length === 2')
+        note = self.notes()[1]
+        self.assertEqual(note['title'], 'Turn ended: pipelines · long build')
+        self.assertRegex(note['body'], r'^Ran 18m( \d\ds)? · Fix the thing\.$')
+
     def test_permission_is_asked_from_the_button_not_on_load(self):
         self.notify_page(perm='default')
         self.assertTrue(self.page.is_visible('#notify-ask'))
