@@ -19,6 +19,7 @@ import {
   agentStatusOf,
   boardPlan,
   boardStatus,
+  progressText,
   clip,
   cronFired,
   cronToolDone,
@@ -390,8 +391,11 @@ async function ensure($: EngineInterface): Promise<Board | null> {
 async function boardStatusCalled($: EngineInterface, input: Record<string, unknown>): Promise<string> {
   const b = await ensure($)
   if (!b) return 'The board is not running in this session; nothing recorded.'
+  const before = b.progress
   const reply = boardStatus(b, input, now())
-  event('turn', b.done ? `done${b.done.note ? `: ${b.done.note}` : ''}` : 'working again')
+  if (input.status === 'done' && b.done) event('turn', `done${b.done.note ? `: ${b.done.note}` : ''}`)
+  else if (input.status === 'working') event('turn', 'working again')
+  if (b.progress && b.progress !== before) event('turn', `progress: ${progressText(b.progress)}`)
   schedule($)
   return reply
 }
@@ -505,7 +509,11 @@ async function turnStarted($: EngineInterface, text: string) {
     b.prompt = clip(shown, 600)
     b.promptAt = now()
     event('prompt', shown)
-    if (slash) setSkill(slash.name, slash.args)
+    if (slash) {
+      // A new command is a new task: the last one's progress report no longer holds.
+      b.progress = null
+      setSkill(slash.name, slash.args)
+    }
     // The person replied, which answers a plan waiting for their go.
     if (b.plan?.gate) b.plan.gate = null
     // A prompt after done leaves done standing: the task is the model's to

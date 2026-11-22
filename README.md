@@ -244,8 +244,8 @@ from any page but the board itself.
 Each tile also shows the project and branch, the name on the session's
 terminal tab (the title Claude Code gives the session, or the one set with
 `/rename`), the work item and skill (when a
-skill such as `/deliver-story 1234` is running), a phase inferred from the
-running subagent, the tools in flight with live timers, the subagents with
+skill such as `/deliver-story 1234` is running), the progress the session
+reported or else a phase inferred from the running subagent, the tools in flight with live timers, the subagents with
 their status, and context use, cost and turn count. Click a tile for the
 prompt, the agent list, the full timeline and a `claude --resume` line to copy.
 
@@ -280,8 +280,17 @@ of that project was up at the time, and their arrow is dotted. A sender the
 board can't place shows as a hollow node. Sessions in a sandbox are left out
 of the graph.
 
-Phases come from the newest running subagent's type, then from the running
-skill. Out of the box:
+A skill can report where it is through the board's `board_status` tool, by
+calling it without a `status` and with `phase` (free text, such as
+"Reviewing"), `step` and `of` (story 3 of 7) and `workItem` (the item it is on
+now). The tile then shows **Reviewing · 3/7 · #25229** in place of the inferred
+phase, and the drawer shows when it was reported. Each call replaces the last
+report. A progress report never marks the task done. `done`, a new slash
+command or `/clear` clears it. The skill has to be told to call it; nothing
+here makes it.
+
+Without a report, phases come from the newest running subagent's type, then
+from the running skill. Out of the box:
 
 | Running | Phase |
 | --- | --- |

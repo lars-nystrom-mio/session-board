@@ -87,12 +87,14 @@ def plans(now):
             {'workItem': '26100', 'title': 'Docs', 'type': 'Task', 'start': 'skip', 'after': [], 'proposed': False, 'question': None, 'reason': 'tasks get no session'},
         ]}
     p = board(P, edi, 'running', 'deliver 30281', now=now)
-    p.update(workItem='30281', skill={'name': 'work-item-delivery', 'args': '30281', 'at': now - 9 * MIN})
+    p.update(workItem='30281', skill={'name': 'work-item-delivery', 'args': '30281', 'at': now - 9 * MIN},
+             progress={'at': now - MIN, 'phase': 'Reviewing', 'step': 3, 'of': 7, 'workItem': '30281'})
     q = board(Q, edi, 'idle', 'deliver 30277', now=now)
     q.update(workItem='30277', done={'at': now - 2 * MIN, 'note': 'merged'})
     y = board(Y, 'C:\\sandbox\\x', 'idle', 'boxed plan', now=now)
     y['plan'] = {'title': '<img src=x onerror=alert(1)>', 'gate': None,
                  'items': [{'workItem': '<b>1</b>', 'title': '"><script>bad()</script>', 'type': 'constructor', 'start': '<i>'}]}
+    y['progress'] = {'at': now, 'phase': '<img src=x onerror=alert(1)>', 'step': '<b>2</b>', 'of': 3}
     return [o, p, q], y
 
 
@@ -298,6 +300,18 @@ class MessagesView(unittest.TestCase):
         self.assertNotIn('<', plan.inner_text())
         self.assertEqual(plan.locator('.p-row .ty').text_content(), 'constructor')
 
+
+    def test_a_reported_phase_wins_over_the_inferred_one(self):
+        phase = self.tile(P).locator('.phase')
+        self.assertIn('reported', phase.get_attribute('class'))
+        self.assertEqual(phase.text_content(), 'Reviewing · 3/7 · #30281')
+        # A sandboxed report renders as text, and a step that isn't a number is dropped.
+        boxed = self.tile(Y).locator('.phase')
+        self.assertEqual(self.tile(Y).locator('.title img').count(), 0)
+        self.assertNotIn('<', boxed.text_content())
+        self.assertNotIn('2', boxed.text_content())
+        # Without a report the tile keeps the inferred phase.
+        self.assertNotIn('reported', self.tile(G).locator('.title').inner_html())
 
     def test_a_full_tile_keeps_the_height_and_cuts_nothing(self):
         # 370px of viewport leaves the narrowest tile the grid allows.

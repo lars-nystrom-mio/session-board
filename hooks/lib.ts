@@ -110,7 +110,15 @@ export type Board = {
   done?: { at: number; note: string } | null
   // A plan of work items this session shows on the board, set through board_plan.
   plan?: Plan | null
+  // Where a skill says it is, set through board_status. The tile shows it in
+  // place of the phase inferred from subagents. Cleared by done, a new slash
+  // command and /clear.
+  progress?: Progress | null
 }
+
+// What a board_status call reported, cleaned by progressOf. Each report
+// replaces the last one whole.
+export type Progress = { at: number; phase: string; step: number | null; of: number | null; workItem: string | null }
 
 // A background task the session will hear from: a Bash or PowerShell call run
 // in the background, or a Monitor. `until` is when the board stops waiting for
@@ -810,36 +818,88 @@ export const BOARD_STATUS_TOOL = {
   name: 'board_status',
   description:
     "Tells the session board (the user's dashboard of Claude Code sessions) where this session stands. " +
-    'Call it with status "done" once the task this session was started with is finished, such as a work item ' +
+    'Two separate uses. (1) Progress: when a skill or the user asks you to report progress, call it without ' +
+    '"status" and with phase, step and of, and workItem, at each new step of a longer task. That only updates ' +
+    'the tile; it says nothing about being finished. Each call replaces the last report. ' +
+    '(2) Status "done": only once the whole task this session was started with is finished, such as a work item ' +
     'delivered, and nothing more will happen without the user: a queue of work items waits for it to start ' +
-    'the next session in this repo. Done stands through follow-up questions and small fixes afterwards; ' +
-    'call it with "working" only if the task itself is reopened, and "done" again when it is finished. ' +
-    'Not after every turn, and not for a step of a larger task.',
+    'the next session in this repo. Never "done" for a step, a phase or one item of a list. Done stands through ' +
+    'follow-up questions and small fixes afterwards; call it with "working" only if the task itself is reopened, ' +
+    'and "done" again when it is finished. Not after every turn.',
   inputSchema: {
     type: 'object',
     properties: {
-      status: { type: 'string', enum: ['done', 'working'] },
-      note: { type: 'string', description: 'One line: what was done, or what is left.' },
+      status: {
+        type: 'string',
+        enum: ['done', 'working'],
+        description: 'Leave out for a progress report. "done": the whole task is finished. "working": it was reopened.',
+      },
+      note: { type: 'string', description: 'With a status, one line: what was done, or what is left.' },
+      phase: { type: 'string', description: 'Progress: what is happening now, such as "Reviewing" or "Waiting on pipeline".' },
+      step: { type: 'integer', minimum: 1, description: 'Progress: which item of a list this is, 1-based, such as story 3.' },
+      of: { type: 'integer', minimum: 1, description: 'Progress: how many items the list has, such as 7 stories.' },
+      workItem: { type: 'string', description: 'Progress: the work item or issue being worked on right now, such as "25229".' },
     },
-    required: ['status'],
   },
+}
+
+const PROGRESS_KEYS = ['phase', 'step', 'of', 'workItem'] as const
+
+const count = (v: unknown): number | null => {
+  const n = num(typeof v === 'string' && /^\s*\d+\s*$/.test(v) ? Number(v) : v)
+  return n !== null && Number.isInteger(n) && n >= 1 && n <= 9999 ? n : null
+}
+
+// The progress fields of a board_status call, cleaned; null when none is usable.
+export function progressOf(input: Record<string, unknown>, now: number): Progress | null {
+  const phase = clip(str(input.phase).replace(/\s+/g, ' ').trim(), 60)
+  const step = count(input.step)
+  let of = count(input.of)
+  if (of !== null && (step === null || of < step)) of = null
+  const workItem = clip(str(input.workItem).trim().replace(/^#/, ''), 40) || null
+  if (!phase && step === null && !workItem) return null
+  return { at: now, phase, step, of, workItem }
+}
+
+// How a tile reads a progress report: "Reviewing · 3/7 · #25229". The page
+// formats it the same way (progressText in dashboard/index.html).
+export function progressText(p: Progress): string {
+  const step = p.step === null ? '' : p.of === null ? `step ${p.step}` : `${p.step}/${p.of}`
+  return [p.phase, step, p.workItem ? `#${p.workItem}` : ''].filter(Boolean).join(' · ')
 }
 
 // A board_status call; returns what the model reads back.
 export function boardStatus(board: Board, input: Record<string, unknown>, now: number): string {
+  const status = input.status ?? null
+  if (status !== null && status !== 'done' && status !== 'working') {
+    return 'status must be "done", "working" or left out; nothing recorded.'
+  }
+  const reported = PROGRESS_KEYS.some((k) => input[k] !== undefined && input[k] !== null && input[k] !== '')
+  const progress = reported ? progressOf(input, now) : null
   const note = clip(str(input.note), 200)
-  if (input.status === 'done') {
+  if (status === 'done') {
     board.done = { at: now, note }
+    board.progress = null
     return (
       'Recorded: done. The board frees this session for the next queued work item once the turn ends. ' +
       'Follow-ups do not undo it; call "working" only if the task is reopened.'
     )
   }
-  if (input.status === 'working') {
-    board.done = null
-    return 'Recorded: working. Call "done" again when the task is finished.'
+  if (status === null && !progress) {
+    return reported
+      ? 'Nothing usable in phase, step or workItem; nothing recorded.'
+      : 'Give a status, or progress (phase, step and of, workItem); nothing recorded.'
   }
-  return 'status must be "done" or "working"; nothing recorded.'
+  const said: string[] = []
+  if (status === 'working') {
+    board.done = null
+    said.push('Recorded: working. Call "done" again when the task is finished.')
+  }
+  if (progress) {
+    board.progress = progress
+    said.push('Recorded progress. It does not mark the task done.')
+  }
+  return said.join(' ')
 }
 
 // ---- Plans ------------------------------------------------------------------

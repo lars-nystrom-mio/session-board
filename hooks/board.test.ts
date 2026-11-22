@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
-import { addMessage, crossSessionMessage, peerNotice, sendTarget, MAX_MESSAGES, boardStatus, boardPlan, planWaiting, plannedWork, pruneShells, shellReported, shellToolDone, SHELL_MAX_MS, addPrs, adoOrgOf, cronFired, cronToolDone, nextCronMatch, pruneCrons, CRON_EXPIRY_MS, WAKEUP_ID, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, childLabel, deriveState, freshBoard, memoryOf, parseMachine, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, summarize, toolLabel, trimAgents, workItemOf, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
+import { addMessage, crossSessionMessage, peerNotice, sendTarget, MAX_MESSAGES, boardStatus, progressOf, progressText, boardPlan, planWaiting, plannedWork, pruneShells, shellReported, shellToolDone, SHELL_MAX_MS, addPrs, adoOrgOf, cronFired, cronToolDone, nextCronMatch, pruneCrons, CRON_EXPIRY_MS, WAKEUP_ID, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, childLabel, deriveState, freshBoard, memoryOf, parseMachine, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, summarize, toolLabel, trimAgents, workItemOf, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
 
 describe('summaries', () => {
   test('a tool call becomes one short line', async () => {
@@ -456,6 +456,45 @@ describe('board_status', () => {
     expect(board.done?.at).toBe(5)
     boardStatus(board, { status: 'working' }, 7)
     expect(board.done).toBe(null)
+  })
+
+  test('a progress report leaves done alone and replaces the last report', () => {
+    const board = freshBoard('s1', '/x', 0)
+    expect(boardStatus(board, { phase: 'Reviewing', step: 3, of: 7, workItem: '#25229' }, 5)).toMatch(/does not mark the task done/)
+    expect(board.progress).toEqual({ at: 5, phase: 'Reviewing', step: 3, of: 7, workItem: '25229' })
+    expect(board.done ?? null).toBe(null)
+    boardStatus(board, { status: 'done', note: 'merged' }, 6)
+    expect(board.done?.at).toBe(6)
+    expect(board.progress).toBe(null) // done ends the report
+    // A progress report after done doesn't reopen the task.
+    boardStatus(board, { phase: 'Answering a question' }, 7)
+    expect(board.done?.at).toBe(6)
+    expect(board.progress?.phase).toBe('Answering a question')
+    expect(board.progress?.step).toBe(null)
+    // "working" with progress reopens and reports in one call.
+    boardStatus(board, { status: 'working', phase: 'Fixing review findings' }, 8)
+    expect(board.done).toBe(null)
+    expect(board.progress).toEqual({ at: 8, phase: 'Fixing review findings', step: null, of: null, workItem: null })
+  })
+
+  test('no status and nothing usable records nothing', () => {
+    const board = freshBoard('s1', '/x', 0)
+    expect(boardStatus(board, {}, 1)).toMatch(/nothing recorded/)
+    expect(boardStatus(board, { phase: '   ', step: 0 }, 1)).toMatch(/nothing recorded/)
+    expect(boardStatus(board, { status: 'later', phase: 'x' }, 1)).toMatch(/nothing recorded/)
+    expect(board.progress ?? null).toBe(null)
+  })
+
+  test('progressOf cleans what the model sends', () => {
+    expect(progressOf({ step: '2', of: 1, phase: 'a\n  b' }, 1)).toEqual({ at: 1, phase: 'a b', step: 2, of: null, workItem: null })
+    expect(progressOf({ of: 7 }, 1)).toBe(null) // a total alone says nothing
+    expect(progressOf({ step: 1.5, workItem: 12 }, 1)).toBe(null)
+    expect(progressOf({ phase: 'x'.repeat(100) }, 1)?.phase.length).toBeLessThanOrEqual(60)
+  })
+
+  test('progressText reads like the tile', () => {
+    expect(progressText({ at: 0, phase: 'Reviewing', step: 3, of: 7, workItem: '25229' })).toBe('Reviewing · 3/7 · #25229')
+    expect(progressText({ at: 0, phase: '', step: 2, of: null, workItem: null })).toBe('step 2')
   })
 })
 

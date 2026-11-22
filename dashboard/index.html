@@ -304,6 +304,8 @@
     color: var(--run); background: color-mix(in srgb, var(--run) 12%, transparent);
     padding: 0 8px; line-height: 20px; border-radius: 999px;
   }
+  /* A reported phase is free text: it can shrink and cut rather than push the title out. */
+  .phase.reported { display: block; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .stalled .phase { color: var(--stall); background: color-mix(in srgb, var(--stall) 12%, transparent); }
   .s-background .phase { color: var(--bg-agent); background: color-mix(in srgb, var(--bg-agent) 14%, transparent); }
   .done-badge {
@@ -758,7 +760,7 @@ async function loadSessions() {
 
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const NUMBER_KEYS = new Set(['startedAt', 'updatedAt', 'stateSince', 'promptAt', 'at', 'since', 'until', 't',
-  'turns', 'costUsd', 'percent', 'tokens', 'window', 'nextAt', 'firedAt', 'endedAt', 'createdAt', 'offsetMs', 'number'])
+  'turns', 'costUsd', 'percent', 'tokens', 'window', 'nextAt', 'firedAt', 'endedAt', 'createdAt', 'offsetMs', 'number', 'step', 'of'])
 const LIST_KEYS = ['prs', 'tools', 'agents', 'events', 'crons', 'shells', 'messages']
 const TEXT_KEYS = ['cwd', 'project', 'branch', 'tabTitle', 'model', 'prompt', 'workItem', 'activeSkill', 'endReason']
 
@@ -779,7 +781,7 @@ function defang(raw) {
   if (!b || typeof b !== 'object' || Array.isArray(b) || !SESSION_ID.test(b.sessionId)) return null
   for (const k of LIST_KEYS) b[k] = (Array.isArray(b[k]) ? b[k] : []).filter((x) => x && typeof x === 'object')
   for (const k of TEXT_KEYS) if (typeof b[k] !== 'string') b[k] = null
-  for (const k of ['repo', 'waiting', 'skill', 'context', 'cache', 'done', 'plan']) {
+  for (const k of ['repo', 'waiting', 'skill', 'context', 'cache', 'done', 'plan', 'progress']) {
     if (!b[k] || typeof b[k] !== 'object' || Array.isArray(b[k])) b[k] = null
   }
   if (!(b.state in STATE_WORD)) b.state = 'idle'
@@ -1310,6 +1312,18 @@ function phaseOf(s) {
   return running[0]?.type ?? null
 }
 
+// What the session reported through board_status: "Reviewing · 3/7 · #25229",
+// as progressText in hooks/lib.ts writes it. Null when it reported nothing.
+function progressText(s) {
+  const p = s.progress
+  if (!p || typeof p !== 'object') return null
+  const n = (v) => (Number.isInteger(v) && v > 0 ? v : null)
+  const step = n(p.step), of = n(p.of)
+  const parts = [typeof p.phase === 'string' ? p.phase : '', step === null ? '' : of === null ? `step ${step}` : `${step}/${of}`,
+    typeof p.workItem === 'string' && p.workItem ? '#' + p.workItem : '']
+  return parts.filter(Boolean).join(' · ') || null
+}
+
 // phases.json is optional; a missing or broken file leaves the defaults.
 async function loadPhases() {
   let rules
@@ -1353,7 +1367,9 @@ function tileHtml(s) {
   const stall = stalls.get(s.sessionId)
   // Two axes: the activity (state dot, phase) and the task, which only the
   // model sets with board_status. Done stands through follow-up prompts.
-  const phase = s.done && s.state === 'idle' ? null : phaseOf(s)
+  // What the session reported comes first; the phase inferred from subagents is the fallback.
+  const reported = s.done && s.state === 'idle' ? null : progressText(s)
+  const phase = reported ?? (s.done && s.state === 'idle' ? null : phaseOf(s))
   const after = s.done ? s.events.filter((e) => e.kind === 'prompt' && e.t > s.done.at).length : 0
   const done = s.done
     ? `<span class="done-badge" title="said it was done ${esc(clock(s.done.at))}${s.done.note ? `: ${esc(s.done.note)}` : ''}">✓ Done${after ? ` · +${after}` : ''}</span>`
@@ -1370,7 +1386,7 @@ function tileHtml(s) {
         ? `<span class="since" title="running, but ${esc(stall.text)}">${live(stall.since, `stalled · ${stall.tool ? stall.tool.tool : 'quiet'} `)}</span>`
         : `<span class="since">${stale ? `no heartbeat ${live(s.updatedAt)}` : live(s.stateSince, STATE_WORD[s.state] + ' ')}</span>`}
     </div>
-    <div class="title"><span class="tt">${titleOf(s)}</span>${done}${phase ? `<span class="phase">${esc(phase)}</span>` : ''}</div>`)
+    <div class="title"><span class="tt">${titleOf(s)}</span>${done}${phase ? `<span class="phase${reported ? ' reported' : ''}"${reported ? ` title="reported ${esc(clock(s.progress.at))}"` : ''}>${esc(phase)}</span>` : ''}</div>`)
   // The title already shows the prompt's first sentence when there's no work item or skill.
   const promptText = s.workItem || s.skill ? s.prompt : s.prompt?.slice(firstSentence(s.prompt).length).trim()
   parts.push(`<p class="prompt">${esc(promptText)}</p>`)
@@ -1891,6 +1907,8 @@ function drawerHtml(s) {
       <dt>${esc(prName(p))}</dt><dd><a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.repo)}</a> · ${clock(p.at)}</dd>`).join('')}</dl>`)
   }
 
+  const progress = progressText(s)
+  if (progress) out.push(`<h3>Progress</h3><dl class="kv"><dt>reported</dt><dd>${esc(clock(s.progress.at))}</dd><dt>where</dt><dd class="progress">${esc(progress)}</dd></dl>`)
   if (s.done) out.push(`<h3>Done</h3><dl class="kv"><dt>said at</dt><dd>${esc(clock(s.done.at))}</dd>${s.done.note ? `<dt>note</dt><dd>${esc(s.done.note)}</dd>` : ''}</dl>`)
   if (s.shells?.length) {
     out.push(`<h3>In the background</h3><div class="activity">${s.shells.map((b) => `
