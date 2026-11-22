@@ -492,6 +492,13 @@ describe('board_status', () => {
     expect(boardStatus(board, { status: 'working', phase: ' ' }, 3)).toMatch(/no progress recorded/)
   })
 
+  test('a subagent cannot replace the main loop\'s report', () => {
+    const board = freshBoard('s1', '/x', 0)
+    boardStatus(board, { phase: 'Implementing', step: 3, of: 7 }, 1)
+    expect(boardStatus(board, { phase: 'Writing tests', agentId: 'a1' }, 2)).toMatch(/main session only/)
+    expect(board.progress?.phase).toBe('Implementing')
+  })
+
   test('progressOf cleans what the model sends', () => {
     expect(progressOf({ step: '2', of: 1, phase: 'a\n  b' }, 1)).toEqual({ at: 1, phase: 'a b', step: 2, of: null, workItem: null })
     expect(progressOf({ of: 7 }, 1)).toBe(null) // a total alone says nothing

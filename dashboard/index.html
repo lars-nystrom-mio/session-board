@@ -1316,7 +1316,7 @@ function phaseOf(s) {
 // as progressText in hooks/lib.ts writes it. Null when it reported nothing.
 function progressText(s) {
   const p = s.progress
-  if (!p || typeof p !== 'object') return null
+  if (!p || typeof p !== 'object' || typeof p.at !== 'number') return null
   // A sandboxed file never went through progressOf, so the same rules apply here.
   const n = (v) => (Number.isInteger(v) && v > 0 && v <= 9999 ? v : null)
   const step = n(p.step), of = step !== null && n(p.of) >= step ? n(p.of) : null

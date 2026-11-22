@@ -820,7 +820,8 @@ export const BOARD_STATUS_TOOL = {
     "Tells the session board (the user's dashboard of Claude Code sessions) where this session stands. " +
     'Two separate uses. (1) Progress: when a skill or the user asks you to report progress, call it without ' +
     '"status" and with phase, step and of, and workItem, at each new step of a longer task. That only updates ' +
-    'the tile; it says nothing about being finished. Each call replaces the last report. ' +
+    'the tile; it says nothing about being finished. Each call replaces the last report. Report progress from ' +
+    'the main conversation only; a subagent\'s report is ignored. ' +
     '(2) Status "done": only once the whole task this session was started with is finished, such as a work item ' +
     'delivered, and nothing more will happen without the user: a queue of work items waits for it to start ' +
     'the next session in this repo. Never "done" for a step, a phase or one item of a list. Done stands through ' +
@@ -876,7 +877,11 @@ export function boardStatus(board: Board, input: Record<string, unknown>, now: n
     return 'status must be "done", "working" or left out; nothing recorded.'
   }
   const reported = PROGRESS_KEYS.some((k) => input[k] !== undefined && input[k] !== null && input[k] !== '')
-  const progress = reported ? progressOf(input, now) : null
+  // A subagent's report would replace the main loop's whole, losing its step
+  // and work item, so progress comes from the main loop only. (`agentId` is on
+  // the tool.call event the hook passes in.)
+  const fromAgent = typeof input.agentId === 'string' && input.agentId !== ''
+  const progress = reported && !fromAgent ? progressOf(input, now) : null
   const note = clip(str(input.note), 200)
   if (status === 'done') {
     board.done = { at: now, note }
@@ -888,6 +893,7 @@ export function boardStatus(board: Board, input: Record<string, unknown>, now: n
     )
   }
   if (status === null && !progress) {
+    if (reported && fromAgent) return 'Progress is taken from the main session only, not from a subagent; nothing recorded.'
     return reported
       ? 'Nothing usable in phase, step or workItem; nothing recorded.'
       : 'Give a status, or progress (phase, step and of, workItem); nothing recorded.'
@@ -900,6 +906,8 @@ export function boardStatus(board: Board, input: Record<string, unknown>, now: n
   if (progress) {
     board.progress = progress
     said.push('Recorded progress. It does not mark the task done.')
+  } else if (reported && fromAgent) {
+    said.push('Progress is taken from the main session only, not from a subagent; not recorded.')
   } else if (reported) {
     said.push('Nothing usable in phase, step or workItem; no progress recorded.')
   }

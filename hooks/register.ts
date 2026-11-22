@@ -511,8 +511,9 @@ async function turnStarted($: EngineInterface, text: string) {
     b.promptAt = now()
     event('prompt', shown)
     if (slash) {
-      // A new command is a new task: the last one's progress report no longer holds.
-      b.progress = null
+      // Another command is a new task: the last one's progress report no longer
+      // holds. A job firing the running skill again (a /loop tick) keeps it.
+      if (!fired && slash.name !== b.skill?.name) b.progress = null
       setSkill(slash.name, slash.args)
     }
     // The person replied, which answers a plan waiting for their go.

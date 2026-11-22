@@ -286,8 +286,9 @@ calling it without a `status` and with `phase` (free text, such as
 now). The tile then shows **Reviewing · 3/7 · #25229** in place of the inferred
 phase while the session is at work (running, waiting or in the background; an
 idle tile drops it), and the drawer shows it with when it was reported. Each call replaces the last
-report. A progress report never marks the task done. `done`, a new slash
-command or `/clear` clears it. The skill has to be told to call it; nothing
+report, and only the main conversation's reports count, not a subagent's. A
+progress report never marks the task done. `done`, a slash command other than
+the running skill or `/clear` clears it. The skill has to be told to call it; nothing
 here makes it.
 
 Without a report, phases come from the newest running subagent's type, then
