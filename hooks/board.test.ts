@@ -45,6 +45,11 @@ describe('summaries', () => {
     expect(workItemOf('https://dev.azure.com/org/proj/_workitems/edit/25229', true)).toBe('25229')
     expect(workItemOf('https://org.visualstudio.com/P/_workitems/edit/2026/ medium', true)).toBe('2026')
     expect(workItemOf('see https://example.com/a/25229', true)).toBe(null)
+    expect(workItemOf('2045-2046', true)).toBe('2045')
+    expect(workItemOf('2045/2046', true)).toBe('2045')
+    expect(workItemOf('1500.50 then 25229', true)).toBe('25229')
+    expect(workItemOf('build 1.2.12345', true)).toBe(null)
+    expect(workItemOf('2026-1-12345', true)).toBe(null)
   })
 })
 

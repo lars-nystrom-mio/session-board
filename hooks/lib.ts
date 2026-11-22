@@ -315,12 +315,14 @@ export function workItemOf(text: string, allowBare: boolean): string | null {
   if (!allowBare) return null
   const first = text.search(/\S/)
   for (const m of text.matchAll(/(?<![\w/.-])(\d+(?:[-/.]\d+)*)(?!\w)/g)) {
+    // A list or range of items ("25229/25230") gives its first; a run with a
+    // shorter part is a version, decimal or date, never an item.
     const run = m[1] ?? ''
-    if (DATE.test(run)) continue
-    for (const part of run.split(/[-/.]/)) {
-      if (part.length < 4 || part.length > 7) continue
+    const parts = run.split(/[-/.]/)
+    if (DATE.test(run) || parts.some((p) => p.length < 4 || p.length > 7)) continue
+    for (const [i, part] of parts.entries()) {
       const year = part.length === 4 && Number(part) >= 1900 && Number(part) <= 2099
-      if (!year || (m.index === first && run === part)) return part
+      if (!year || (m.index === first && i === 0)) return part
     }
   }
   return null
