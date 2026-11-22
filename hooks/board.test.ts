@@ -35,6 +35,16 @@ describe('summaries', () => {
     expect(workItemOf('dates #2026-10-31 and #1234', false)).toBe('1234')
     expect(workItemOf('continue on #2026', false)).toBe('2026')
     expect(workItemOf('since #2026/10', false)).toBe(null)
+    // A year-range number that opens the args is the item it names.
+    expect(workItemOf('2045', true)).toBe('2045')
+    expect(workItemOf('2045, use autocomplete', true)).toBe('2045')
+    // Pairs and ranges of items are not dates.
+    expect(workItemOf('25229/25230', true)).toBe('25229')
+    expect(workItemOf('25229-25231', true)).toBe('25229')
+    expect(workItemOf('#25229-25231', false)).toBe('25229')
+    expect(workItemOf('https://dev.azure.com/org/proj/_workitems/edit/25229', true)).toBe('25229')
+    expect(workItemOf('https://org.visualstudio.com/P/_workitems/edit/2026/ medium', true)).toBe('2026')
+    expect(workItemOf('see https://example.com/a/25229', true)).toBe(null)
   })
 })
 

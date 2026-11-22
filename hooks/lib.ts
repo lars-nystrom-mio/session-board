@@ -297,16 +297,31 @@ export function addMessage(board: Board, rec: MessageRec): boolean {
 // /deliver from orchestrate-delivery names its issue by URL, and GitHub issue
 // numbers are often too short for the other two forms.
 // A number that is part of a date ("2026-10-31", "10/2026", "#2026-10") or of
-// a word ("orch-2024") is none of these, and a bare number from 1900 to 2099
-// is taken for a year. "#2026" on its own still counts: it names an item.
+// a word ("orch-2024") is none of these. A bare number from 1900 to 2099 is
+// taken for a year unless it opens the args ("/deliver 2045"). "#2026" on its
+// own still counts: it names an item. An Azure DevOps work item URL in skill
+// args gives its id, like a GitHub issue URL.
+const DATE = /^(?:(?:19|20)\d\d(?:[-/.]\d{1,2}){1,2}|(?:\d{1,2}[-/.]){1,2}(?:19|20)\d\d)$/
+
 export function workItemOf(text: string, allowBare: boolean): string | null {
-  const issue = allowBare ? text.match(/https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/issues\/(\d{1,7})\b/i) : null
-  if (issue?.[1]) return issue[1]
-  for (const m of text.matchAll(/#(\d{3,7})(?!\w|[-/.]\d)/g)) return m[1] ?? null
+  const url = allowBare
+    ? text.match(/https:\/\/(?:github\.com\/[\w.-]+\/[\w.-]+\/issues|\S+\/_workitems\/edit)\/(\d{1,7})\b/i)
+    : null
+  if (url?.[1]) return url[1]
+  for (const m of text.matchAll(/#(\d{3,7}(?:[-/.]\d+)*)(?!\w)/g)) {
+    const run = m[1] ?? ''
+    if (!DATE.test(run)) return run.split(/[-/.]/)[0] ?? null
+  }
   if (!allowBare) return null
-  for (const m of text.matchAll(/(?<![\w/.-])(\d{4,7})(?!\w|[-/.:]\d)/g)) {
-    const n = Number(m[1])
-    if (n < 1900 || n > 2099) return m[1] ?? null
+  const first = text.search(/\S/)
+  for (const m of text.matchAll(/(?<![\w/.-])(\d+(?:[-/.]\d+)*)(?!\w)/g)) {
+    const run = m[1] ?? ''
+    if (DATE.test(run)) continue
+    for (const part of run.split(/[-/.]/)) {
+      if (part.length < 4 || part.length > 7) continue
+      const year = part.length === 4 && Number(part) >= 1900 && Number(part) <= 2099
+      if (!year || (m.index === first && run === part)) return part
+    }
   }
   return null
 }

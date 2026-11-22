@@ -40,9 +40,10 @@ install it and how to serve the page. This file is for working on it.
   newest session reporting that work item, one outside a sandbox first.
   A session's work item is `workItemOf` its skill args or prompt: `#1234`, a
   GitHub issue URL in skill args (so `/deliver https://github.com/o/r/issues/12`
-  is `12`) or a bare 4–7 digit number in skill args. A number inside a date
-  or a word (`2026-10-31`, `orch-2024`) never counts, nor a bare 1900–2099
-  (a year). Plan items name work items by number alone, so two repos' `#12` in one plan are the same row. The
+  is `12`), an Azure DevOps `_workitems/edit/<id>` URL or a bare 4–7 digit
+  number in skill args. A number inside a date or a word (`2026-10-31`,
+  `orch-2024`) never counts, nor a bare 1900–2099 (a year) unless it opens
+  the args. Plan items name work items by number alone, so two repos' `#12` in one plan are the same row. The
   board starts nothing from a plan.
 - `server/serve.py`: optional stdlib server for the board folder, but `/`
   comes from `dashboard/index.html` in the repo. It turns off `SO_REUSEADDR` on
