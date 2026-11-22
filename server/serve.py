@@ -369,6 +369,7 @@ class Queue:
         self.start = start
         self.lock = threading.Lock()
         self.held: str | None = None  # why memory pressure holds new starts
+        self.busy: dict[str, int] = {}  # outside sessions holding slots, by project key, as of the last step
 
     def load(self) -> dict:
         try:
@@ -391,6 +392,7 @@ class Queue:
                 # On Windows a scanner or reader that has either file open for a
                 # moment makes the rename fail; it frees it within milliseconds.
                 if attempt == 9:
+                    tmp.unlink(missing_ok=True)
                     raise
                 time.sleep(0.05)
 
@@ -407,8 +409,8 @@ class Queue:
         now = int(time.time() * 1000)
         self.held = memory_hold(newest_machine(self.board, now), self.held is not None)
         live = {k: v for k, v in boards.items() if v is not None}
-        outside = outside_sessions(self.board, q["items"], now, self.idle_ms, q.get("started", []))
-        for item in advance(q, live, now, self.idle_ms, self.max_sessions, hold=self.held is not None, outside=outside):
+        self.busy = outside_sessions(self.board, q["items"], now, self.idle_ms, q.get("started", []))
+        for item in advance(q, live, now, self.idle_ms, self.max_sessions, hold=self.held is not None, outside=self.busy):
             prompt = self.prompt.replace("{id}", item["workItem"])
             try:
                 self.start(item["cwd"], prompt, item["sessionId"])
@@ -426,7 +428,7 @@ class Queue:
     def view(self, projects: list[dict]) -> dict:
         with self.lock:
             q = self.load()
-        busy = outside_sessions(self.board, q["items"], int(time.time() * 1000), self.idle_ms, q.get("started", []))
+            busy = self.busy  # from the last tick, so a poll doesn't read every status file
         return {
             "prompt": self.prompt,
             "maxSessions": self.max_sessions,

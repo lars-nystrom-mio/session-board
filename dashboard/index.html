@@ -2007,6 +2007,11 @@ function renderQueue() {
     .sort((a, b) => b.endedAt - a.endedAt).slice(0, QUEUE_SHOW_ENDED)
   // A queued item's place among those waiting for the same project.
   const place = (i) => waiting.filter((w) => w.cwd === i.cwd).indexOf(i) + 1
+  // Sessions started outside the queue that hold the project's slots (`busy`), on the first item waiting there.
+  const outsideNote = (i) => {
+    const n = place(i) === 1 ? Number(queue.projects.find((p) => p.path === i.cwd)?.busy) || 0 : 0
+    return n ? `<span title="sessions on a work item that you started yourself count against the project's limit">${n} session${n === 1 ? '' : 's'} outside the queue</span> · ` : ''
+  }
   const row = (i, st, info, acts) => `
     <div class="q ${esc(i.state)}${st === 'ended' ? ' ended' : ''}">
       <span class="st">${esc(i.state)}</span>
@@ -2022,7 +2027,7 @@ function renderQueue() {
       const info = s ? `${esc(STATE_WORD[s.state])}${s.done ? ' · said it was done' : ''} · started ${live(i.startedAt)} ago` : `starting · ${live(i.startedAt)}`
       return row(i, 'running', info, [['release', 'release', 'count this one as finished and start the next']])
     }),
-    ...waiting.map((i) => row(i, 'queued', `${queue.held ? `<span style="color:var(--warn)">held: ${esc(queue.held)}</span> · ` : ''}${ordinal(place(i))} in ${esc(i.name)} · queued ${clock(i.queuedAt)}`, [
+    ...waiting.map((i) => row(i, 'queued', `${queue.held ? `<span style="color:var(--warn)">held: ${esc(queue.held)}</span> · ` : ''}${outsideNote(i)}${ordinal(place(i))} in ${esc(i.name)} · queued ${clock(i.queuedAt)}`, [
       ['first', '↑', 'move to the front of the queue'],
       ['cancel', 'cancel', 'take it off the queue'],
     ])),

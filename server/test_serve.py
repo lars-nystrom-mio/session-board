@@ -5,6 +5,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 import uuid
 from functools import partial
 from pathlib import Path
@@ -322,6 +323,23 @@ class QueueActions(unittest.TestCase):
     def add(self, n):
         return self.queue.act({"action": "add", "workItem": str(n), "cwd": self.repo}, self.projects)
 
+    def test_save_retries_a_refused_rename_and_cleans_up_when_it_gives_up(self):
+        real = os.replace
+        calls = []
+        def flaky(src, dst):
+            calls.append(src)
+            if len(calls) < 3:
+                raise PermissionError(5, "Access is denied")
+            real(src, dst)
+        with mock.patch("serve.os.replace", flaky), mock.patch("serve.time.sleep"):
+            self.queue.save({"limits": {}, "items": []})
+        self.assertEqual(len(calls), 3)
+        self.assertTrue((self.board / "queue.json").exists())
+        with mock.patch("serve.os.replace", side_effect=PermissionError(5, "Access is denied")), \
+                mock.patch("serve.time.sleep"), self.assertRaises(PermissionError):
+            self.queue.save({"limits": {}, "items": []})
+        self.assertFalse((self.board / "queue.tmp").exists())
+
     def test_add_starts_the_first_and_queues_the_rest(self):
         first = self.add(1)
         second = self.add(2)
@@ -401,6 +419,7 @@ class QueueActions(unittest.TestCase):
     def test_a_session_started_by_hand_holds_the_slot(self):
         write_session(self.board, "manual", sessionId="manual", cwd=self.repo, repo=None, workItem="9",
                       state="running", updatedAt=int(time.time() * 1000))
+        self.queue.tick()
         self.assertEqual(self.queue.view(self.projects)["projects"][0]["busy"], 1)
         self.assertEqual(self.add(1)["state"], "queued")
         write_session(self.board, "manual", sessionId="manual", cwd=self.repo, repo=None, workItem="9",
