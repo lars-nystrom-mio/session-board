@@ -36,6 +36,7 @@
     --ok: #50fa7b;
     --warn: #ffb86c;
     --you: #ff79c6;
+    --stall: #f1fa8c;
     --bg-agent: #bd93f9;
     --scrim: rgba(5, 6, 10, .55);
     --lift: none;
@@ -58,6 +59,7 @@
     --ok: #166428;
     --warn: #924300;
     --you: #a8124f;
+    --stall: #7a6200;
     --bg-agent: #6a32c9;
     --scrim: rgba(20, 22, 30, .35);
     --lift: 0 1px 2px rgba(20, 22, 30, .06), 0 2px 8px -2px rgba(20, 22, 30, .08);
@@ -253,6 +255,11 @@
   .tile.s-waiting::after { animation: glow 2.2s ease-in-out infinite; }
   .tile.s-idle { opacity: .9; }
   .tile.stale { opacity: .5; filter: saturate(.3); }
+  /* Stalled: running by its heartbeat, but nothing new is happening. Yellow, so
+     it reads as neither a healthy run (cyan) nor needs you (pink), and the sweep
+     stops: a still bar across the top instead. */
+  .tile.s-running.stalled { --accent: var(--stall); border-color: color-mix(in srgb, var(--stall) 55%, var(--line)); }
+  .tile.s-running.stalled::before { width: 100%; opacity: .7; animation: none; }
   .tile.blip { animation: enter .35s ease both, blip .7s ease-out; }
 
   .t-top { display: flex; align-items: center; gap: 8px; min-width: 0; height: 22px; }
@@ -261,6 +268,7 @@
   .s-background .state-dot { background: var(--bg-agent); animation: pulse 2.4s ease-in-out infinite; }
   .s-waiting .state-dot { background: var(--you); animation: pulse .9s ease-in-out infinite; }
   .s-idle .state-dot { background: var(--ok); }
+  .s-running.stalled .state-dot { background: var(--stall); animation: none; }
   .project { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .branch { font-family: var(--mono); font-size: 11px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   /* The terminal tab's name, so the right tab is easy to find. */
@@ -278,6 +286,7 @@
   .sbx { flex: none; padding: 0 6px; border: 1px dashed var(--muted); border-radius: 5px; font-size: 10.5px; color: var(--muted); }
   .since { flex: none; margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
   .s-waiting .since { color: var(--you); }
+  .stalled .since { color: var(--stall); }
 
   /* Every tile has the same fixed slots, so tiles are all one height and content
      changes between polls never reflow the grid. */
@@ -295,6 +304,7 @@
     color: var(--run); background: color-mix(in srgb, var(--run) 12%, transparent);
     padding: 0 8px; line-height: 20px; border-radius: 999px;
   }
+  .stalled .phase { color: var(--stall); background: color-mix(in srgb, var(--stall) 12%, transparent); }
   .s-background .phase { color: var(--bg-agent); background: color-mix(in srgb, var(--bg-agent) 14%, transparent); }
   .done-badge {
     flex: none; margin-left: auto;
@@ -320,6 +330,7 @@
   .act .who { color: var(--bg-agent); flex: none; }
   .act .what { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
   .act .t { margin-left: auto; color: var(--faint); flex: none; }
+  .act.over .what, .act.over .t { color: var(--stall); }
   .act.last .what { color: var(--muted); }
   .act.past .what { color: var(--faint); }
 
@@ -1234,6 +1245,32 @@ function messagesDrawerHtml() {
 }
 
 const isStale = (s) => s.state !== 'ended' && Date.now() - s.updatedAt > STALE_MS
+
+// A running session whose heartbeat still arrives but where nothing new happens:
+// a watcher that never returns, a Bash call waiting on stdin. Either a tool has
+// run past its limit, or no tool is in flight and nothing new has happened for
+// STALL_MS. Limits are by tool name as the tile shows it; edit them here.
+const STALL_MS = 10 * 60_000
+const TOOL_LIMIT_MS = {
+  Bash: 20 * 60_000, PowerShell: 20 * 60_000,  // builds and test runs take a while
+  Agent: 60 * 60_000, Task: 60 * 60_000,        // a foreground subagent, whose own tools show too
+  WebFetch: 3 * 60_000, WebSearch: 3 * 60_000,
+}
+const TOOL_LIMIT_DEFAULT_MS = 5 * 60_000
+const mins = (ms) => `${Math.round(ms / 60_000)} min`
+const toolLimit = (t) => TOOL_LIMIT_MS[t.tool] ?? TOOL_LIMIT_DEFAULT_MS
+const lastActivity = (s) => Math.max(s.stateSince, s.promptAt ?? 0, s.events.at(-1)?.t ?? 0,
+  ...s.tools.map((t) => t.since), ...s.agents.map((a) => Math.max(a.since ?? 0, a.endedAt ?? 0)))
+
+// null, or { since, tool?, limit?, text } for a stalled session.
+function stallOf(s, now = Date.now()) {
+  if (s.state !== 'running' || isStale(s)) return null
+  const over = s.tools.filter((t) => now - t.since > toolLimit(t)).sort((a, b) => a.since - b.since)[0]
+  if (over) return { since: over.since, tool: over, text: `${over.tool} has run longer than ${mins(toolLimit(over))}` }
+  if (s.tools.length) return null
+  const last = lastActivity(s)
+  return now - last > STALL_MS ? { since: last, text: `nothing new for over ${mins(STALL_MS)}` } : null
+}
 const projectOf = (s) => s.repo?.name || s.project || s.cwd
 const shortModel = (m) => (m || '').replace(/^claude-/, '').replace(/\[.*\]$/, '')
 
@@ -1284,6 +1321,7 @@ function titleOf(s) {
 
 function tileHtml(s) {
   const stale = isStale(s)
+  const stall = stallOf(s)
   // Two axes: the activity (state dot, phase) and the task, which only the
   // model sets with board_status. Done stands through follow-up prompts.
   const phase = s.done && s.state === 'idle' ? null : phaseOf(s)
@@ -1299,7 +1337,9 @@ function tileHtml(s) {
       ${s.sandboxed ? '<span class="sbx" title="runs in a sandbox; what this tile shows comes from the sandbox">sandbox</span>' : ''}
       ${s.tabTitle ? `<span class="tab" title="terminal tab: ${esc(s.tabTitle)}">${esc(s.tabTitle)}</span>` : ''}
       ${s.branch ? `<span class="branch">${esc(s.branch)}</span>` : ''}
-      <span class="since">${stale ? `no heartbeat ${live(s.updatedAt)}` : live(s.stateSince, STATE_WORD[s.state] + ' ')}</span>
+      ${stall
+        ? `<span class="since" title="running, but ${esc(stall.text)}">${live(stall.since, `stalled · ${stall.tool ? stall.tool.tool : 'quiet'} `)}</span>`
+        : `<span class="since">${stale ? `no heartbeat ${live(s.updatedAt)}` : live(s.stateSince, STATE_WORD[s.state] + ' ')}</span>`}
     </div>
     <div class="title"><span class="tt">${titleOf(s)}</span>${done}${phase ? `<span class="phase">${esc(phase)}</span>` : ''}</div>`)
   // The title already shows the prompt's first sentence when there's no work item or skill.
@@ -1316,7 +1356,7 @@ function tileHtml(s) {
     const acts = [...s.tools].sort((a, b) => (a.agentId ? 1 : 0) - (b.agentId ? 1 : 0) || a.since - b.since).slice(0, 4)
     if (acts.length) {
       slot = `<div class="activity">${acts.map((t) => `
-        <div class="act">${t.agentId ? `<span class="who">${esc(nameOf(t.agentId) || 'agent')}</span>` : ''}
+        <div class="act${stall?.tool === t ? ' over' : ''}">${t.agentId ? `<span class="who">${esc(nameOf(t.agentId) || 'agent')}</span>` : ''}
           <span class="what">${esc(t.tool)}${t.summary ? ` · ${esc(t.summary)}` : ''}</span>
           <span class="t">${live(t.since)}</span></div>`).join('')}</div>`
     } else {
@@ -1674,7 +1714,7 @@ function render() {
       t = { el, html: '', lastEvent: null }
       tiles.set(s.sessionId, t)
     }
-    const cls = `tile s-${s.state}${isStale(s) ? ' stale' : ''}`
+    const cls = `tile s-${s.state}${isStale(s) ? ' stale' : ''}${stallOf(s) ? ' stalled' : ''}`
     if (t.el.className.replace(/\s*blip/, '') !== cls) t.el.className = cls
     const html = tileHtml(s)
     if (html !== t.html) { t.el.innerHTML = html; t.html = html; t.fitW = -1 }
@@ -1776,7 +1816,7 @@ function cacheDrawerText(s) {
 function drawerHtml(s) {
   const out = []
   out.push(`<h3>Session</h3><dl class="kv">
-    <dt>state</dt><dd>${esc(isStale(s) ? 'no heartbeat' : STATE_WORD[s.state])}${s.endReason ? ` (${esc(s.endReason)})` : ''}</dd>
+    <dt>state</dt><dd>${esc(isStale(s) ? 'no heartbeat' : STATE_WORD[s.state])}${s.endReason ? ` (${esc(s.endReason)})` : ''}${stallOf(s) ? `<span style="color:var(--stall)"> · looks stalled: ${esc(stallOf(s).text)}</span>` : ''}</dd>
     <dt>directory</dt><dd>${esc(s.cwd)}</dd>
     ${s.repo?.remote ? `<dt>remote</dt><dd>${esc(s.repo.remote)}</dd>` : ''}
     ${s.tabTitle ? `<dt>terminal tab</dt><dd>${esc(s.tabTitle)}</dd>` : ''}

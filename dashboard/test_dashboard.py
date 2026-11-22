@@ -41,6 +41,22 @@ O = '99999999-0000-4000-8000-000000000009'  # an orchestrator whose plan waits f
 P = 'aaaaaaaa-0000-4000-8000-00000000000a'  # delivering an item of O's plan
 Q = 'bbbbbbbb-0000-4000-8000-00000000000b'  # delivered an item of O's plan
 Y = 'cccccccc-0000-4000-8000-00000000000c'  # in a sandbox, with a hostile plan
+S1 = 'dddddddd-0000-4000-8000-00000000000d'  # running, a Bash call past its limit
+S2 = 'eeeeeeee-0000-4000-8000-00000000000e'  # running, nothing in flight and nothing new
+S3 = 'ffffffff-0000-4000-8000-00000000000f'  # running, a Bash call well within its limit
+
+
+def stalls(now):
+    """Two running sessions that look stalled and one that doesn't."""
+    hung = board(S1, 'C:\\Workspace\\pipelines', 'running', 'watch build', now=now)
+    hung['tools'] = [{'id': 't1', 'tool': 'Bash', 'summary': 'az pipelines runs show --wait', 'since': now - 25 * MIN}]
+    quiet = board(S2, 'C:\\Workspace\\pipelines', 'running', 'gone quiet', now=now)
+    quiet.update(stateSince=now - 15 * MIN, promptAt=now - 16 * MIN,
+                 events=[{'t': now - 14 * MIN, 'kind': 'tool', 'text': 'Edit · main.py'}])
+    build = board(S3, 'C:\\Workspace\\pipelines', 'running', 'long build', now=now)
+    build.update(stateSince=now - 15 * MIN, promptAt=now - 16 * MIN)
+    build['tools'] = [{'id': 't3', 'tool': 'Bash', 'summary': 'dotnet build', 'since': now - 12 * MIN}]
+    return [hung, quiet, build]
 
 
 def plans(now):
@@ -121,6 +137,7 @@ def write_boards(root: Path):
             {'t': now - 70 * MIN, 'kind': 'prompt', 'text': envelope('mio-m3-sales-c7', 'c7', 'Please check these work items')}]),
         busy(now),
         *plans(now)[0],
+        *stalls(now),
     ]
     (root / 'sessions').mkdir()
     for b in sessions:
@@ -291,6 +308,27 @@ class MessagesView(unittest.TestCase):
         more = self.tile(G).locator('.agent.more')
         self.assertRegex(more.inner_text(), r'^\+\d$')
         self.assertTrue(more.get_attribute('title'))
+
+    def test_a_running_session_that_went_quiet_looks_stalled(self):
+        for sid, word in ((S1, 'stalled · Bash 25m'), (S2, 'stalled · quiet 14m')):
+            self.assertIn('stalled', self.tile(sid).get_attribute('class'))
+            self.assertTrue(self.tile(sid).locator('.since').inner_text().startswith(word))
+        # Only the overdue tool is marked, and a tool in flight within its limit isn't a stall.
+        self.assertEqual(self.tile(S1).locator('.act.over').count(), 1)
+        for sid in (S3, A, P):
+            self.assertNotIn('stalled', self.tile(sid).get_attribute('class'))
+        # Its own colour, and the sweep stops.
+        look = lambda sid: self.tile(sid).evaluate('''(t) => [getComputedStyle(t).borderTopColor,
+            getComputedStyle(t, '::before').animationName, getComputedStyle(t.querySelector('.state-dot')).backgroundColor]''')
+        stalled, healthy, waiting = look(S1), look(S3), look(O)
+        self.assertEqual(stalled[1], 'none')
+        self.assertEqual(healthy[1], 'sweep')
+        for other in (healthy, waiting):
+            self.assertNotEqual(stalled[0], other[0])
+            self.assertNotEqual(stalled[2], other[2])
+        self.tile(S1).click()
+        self.settled()
+        self.assertIn('looks stalled: Bash has run longer than 20 min', self.page.inner_text('#d-body'))
 
 
 if __name__ == '__main__':
