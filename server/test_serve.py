@@ -79,16 +79,20 @@ class LogToFile(unittest.TestCase):
         import sys
         from serve import log_to_file
         with tempfile.TemporaryDirectory() as d:
-            self.assertFalse(log_to_file(Path(d)))
+            board = Path(d) / "board"
+            board.mkdir()
+            self.assertFalse(log_to_file(board))
             out, err = sys.stdout, sys.stderr
             try:
                 sys.stdout = sys.stderr = None  # as under pythonw.exe
-                self.assertTrue(log_to_file(Path(d)))
+                self.assertTrue(log_to_file(board))
                 print("hello", file=sys.stderr)
-                sys.stderr.close()
             finally:
+                if sys.stderr is not err:
+                    sys.stderr.close()  # before the temp folder goes, or Windows can't delete it
                 sys.stdout, sys.stderr = out, err
-            self.assertEqual((Path(d) / "server.log").read_text(encoding="utf-8").strip(), "hello")
+            self.assertEqual((Path(d) / "board-server.log").read_text(encoding="utf-8").strip(), "hello")
+            self.assertEqual(list(board.iterdir()), [])  # not where the server serves it
 
     def test_log_is_capped(self):
         from serve import CappedLog

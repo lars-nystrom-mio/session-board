@@ -50,6 +50,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -520,6 +521,12 @@ class Handler(SimpleHTTPRequestHandler):
         path = self.path.split("?")[0]
         if path == "/api/queue":
             return self.send_json(200, self.queue.view(known_projects(self.board)))
+        if path == "/sandboxed/" and not (self.board / "sandboxed").is_dir():
+            # The page asks every 2 s and most boards have none: answer 404 without logging it.
+            self.send_response_only(404)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         if path in ("/", "/index.html") and PAGE.is_file():
             body = PAGE.read_bytes()
             self.send_response(200)
@@ -592,13 +599,25 @@ class CappedLog:
             self.file.close()
 
 
+def log_path(board: Path) -> Path:
+    """Beside the board folder, not in it, so the server never serves the log."""
+    return board.with_name(board.name + "-server.log")
+
+
 def log_to_file(board: Path) -> bool:
     """Under pythonw.exe there is no console and sys.stderr is None, so
-    http.server's request log would raise; log to <board>/server.log instead,
-    capped by CappedLog. Returns whether it did."""
+    http.server's request log would raise; log to log_path(board) instead,
+    capped by CappedLog. If that can't be opened, log to the temp folder, and
+    failing that nowhere, so the server still starts. Returns whether it did."""
     if sys.stdout is not None and sys.stderr is not None:
         return False
-    log = CappedLog(board / "server.log")
+    try:
+        log = CappedLog(log_path(board))
+    except OSError:
+        try:
+            log = CappedLog(Path(tempfile.gettempdir()) / "session-board-server.log")
+        except OSError:
+            log = open(os.devnull, "w", encoding="utf-8")
     sys.stdout = sys.stdout or log
     sys.stderr = sys.stderr or log
     return True
@@ -625,12 +644,19 @@ def main() -> None:
                     help="a queued session idle this long, with nothing in the background, frees its slot")
     ap.add_argument("--wt-profile", default="PowerShell",
                     help='the Windows Terminal profile a new tab takes its icon and colors from; "" for none')
+    # Find the log first, so that under pythonw.exe an argument error reaches it too.
+    pre = argparse.ArgumentParser(add_help=False)
+    pre.add_argument("--dir", type=Path, default=default_board_dir())
+    try:
+        board = pre.parse_known_args()[0].dir.resolve()
+    except SystemExit:
+        board = default_board_dir().resolve()
+    to_file = log_to_file(board)
     args = ap.parse_args()
     if "{id}" not in args.prompt:
         sys.exit("--prompt must contain {id}")
     board = args.dir.resolve()
     board.mkdir(parents=True, exist_ok=True)
-    to_file = log_to_file(board)
     queue = Queue(board, args.prompt, int(args.idle_minutes * 60_000), args.max_sessions,
                   start=partial(launch, wt_profile=args.wt_profile))
     handler = type("BoardHandler", (Handler,), {"board": board, "port": args.port, "queue": queue,
