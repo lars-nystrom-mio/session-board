@@ -620,7 +620,21 @@ class MessagesView(unittest.TestCase):
         self.page.goto(self.url)
         self.page.wait_for_selector(f'[data-session="{S2}"]')
         self.page.wait_for_timeout(300)
-        self.assertEqual(self.notes(), [])
+        # Counted from first sight, the quiet may have begun before the page
+        # loaded: the tile turns stalled, but nothing notifies.
+        self.page.clock.run_for(11 * MIN + 2_000)
+        self.page.wait_for_function(f'''document.querySelector('.tile[data-session="{S2}"]').classList.contains('stalled')''')
+        self.page.wait_for_timeout(500)
+        self.assertEqual([n for n in self.notes() if n['title'].endswith('gone quiet')], [])
+        # A streamed answer is something the page saw happen; quiet from then on notifies.
+        path = Path(self.dir.name) / 'sessions' / f'{S2}.json'
+        before = path.read_text(encoding='utf-8')
+        self.addCleanup(path.write_text, before, encoding='utf-8')
+        b = json.loads(before)
+        b['lastStepAt'] = b['updatedAt']
+        path.write_text(json.dumps(b), encoding='utf-8')
+        self.page.clock.run_for(3_000)  # the next poll reads it
+        self.page.wait_for_function(f'''!document.querySelector('.tile[data-session="{S2}"]').classList.contains('stalled')''')
         self.page.clock.run_for(11 * MIN + 2_000)
         self.page.wait_for_function('notes.some((n) => n.title.endsWith("gone quiet"))')
         titles = [n['title'] for n in self.notes()]

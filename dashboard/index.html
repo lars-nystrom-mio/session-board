@@ -1351,7 +1351,7 @@ const newest = (list, key) => list?.reduce((m, x) => Math.max(m, x?.[key] ?? 0),
 // count. Without that field the file's times can't say whether a tool just
 // ended, so it counts from then. So does a main-loop Agent call in flight: its
 // subagent's Reads and Greps leave no time in the file.
-const seen = new Map()  // sessionId -> { sig, at }
+const seen = new Map()  // sessionId -> { sig, at, blind? }
 function lastActive(s, now) {
   if (!('lastToolEnd' in s) || s.tools.some((t) => !t.agentId && AGENT_TOOLS.has(t.tool))) return now
   const t = Math.max(...[s.lastToolEnd, s.lastStepAt, s.promptAt, s.stateSince, newest(s.events, 't'), newest(s.messages, 't'),
@@ -1365,7 +1365,11 @@ function noteActivity(s, now) {
     s.lastStepAt, s.lastToolEnd])
   const was = seen.get(s.sessionId)
   if (was?.sig === sig) return
-  seen.set(s.sessionId, { sig, at: was ? now : lastActive(s, now) })
+  const at = was ? now : lastActive(s, now)
+  // blind: counting from first sight, as the file couldn't say how long it had
+  // been quiet. A quiet stall counted that way may have begun before the page
+  // loaded, so it doesn't notify.
+  seen.set(s.sessionId, { sig, at, blind: !was && at === now })
 }
 
 // null, or { since, tool?, text } for a stalled session. Only the main loop's
@@ -2354,8 +2358,11 @@ function noteTransitions(list, now) {
   for (const s of list) lastSeen.set(s.sessionId, now)
   for (const [id, at] of lastSeen) {
     if (now - at <= FORGET_MS) continue
-    for (const m of [lastSeen, waitNoted, stateWas, stallWas, stallNoted, turns]) m.delete(id)
+    for (const m of [lastSeen, waitNoted, stateWas, turns]) m.delete(id)
   }
+  // Stall history lasts as long as the quiet count in `seen` does, so a session
+  // that misses polls for a while still notifies for a stall that began meanwhile.
+  for (const m of [stallWas, stallNoted]) for (const id of m.keys()) if (!seen.has(id)) m.delete(id)
   for (const s of list) {
     if (s.sandboxed) continue
     const id = s.sessionId
@@ -2382,7 +2389,7 @@ function noteTransitions(list, now) {
     const stall = stalls.get(id)
     const stallBefore = stallWas.get(id)
     if (!isStale(s)) stallWas.set(id, !!stall)
-    if (stall && stallBefore === false && !isStale(s)) {
+    if (stall && stallBefore === false && !isStale(s) && (stall.tool || !seen.get(id)?.blind)) {
       const key = stall.tool ? `tool:${stall.tool.id}` : `quiet:${stall.since}`
       if (stallNoted.get(id) !== key) {
         stallNoted.set(id, key)
@@ -2436,8 +2443,11 @@ function notify(s, kind, took = 0, stall = null) {
   try {
     // The tag keeps two open boards from showing the same notification twice.
     // A quiet stall's `since` is when this page saw the file change, which
-    // another board sees at another moment, so its tag names the turn instead.
-    const at = stall ? (stall.tool ? stall.tool.id : `quiet:${s.turns}`) : s.stateSince
+    // another board sees at another moment, so its tag names what the file
+    // says last happened instead, which a later quiet stall changes.
+    const at = stall
+      ? (stall.tool ? stall.tool.id : `quiet:${s.turns}:${s.lastStepAt ?? ''}:${s.lastToolEnd ?? ''}:${s.events.length}`)
+      : s.stateSince
     const n = new Notification(title, { body: body.slice(0, 240), tag: `${s.sessionId}:${kind}:${at}` })
     n.onclick = () => {
       window.focus()

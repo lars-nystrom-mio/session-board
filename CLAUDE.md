@@ -56,7 +56,9 @@ install it and how to serve the page. This file is for working on it.
   (`noteTurn`, one value of `turns`) that worked 3 min or more: running and
   background count, a wait for you doesn't. When **stalls** is on, it also
   notifies for a stall it saw begin (`stallWas`, from the render's `stalls`),
-  once per stall and never for one there at the first sight of the session.
+  once per stall and never for one there at the first sight of the session,
+  nor for a quiet stall counted from that sight (`blind` in `seen`), which may
+  have begun before the page loaded.
   Sandboxed files never notify.
   Permission is asked from the header's **turn on**, and only in a secure context.
   A session's `plan` draws as a strip above the tiles of its group (`planOf`
