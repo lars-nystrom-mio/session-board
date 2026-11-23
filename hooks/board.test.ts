@@ -131,16 +131,22 @@ describe('summaries', () => {
     }
     expect(ignoredOf({})).toEqual([])
     expect(ignoredOf({ workItem: ['^deliver-issue$'], pr: [], wrapper: ['^every$'] })).toEqual([])
-    for (const json of [null, 'x', 42, []]) expect(ignoredOf(json)).toEqual(['not an object'])
+    for (const json of [null, 'x', 42, []]) expect(ignoredOf(json)).toEqual(['not a JSON object, so every default applies'])
     // A misspelled key keeps the defaults, and says so.
-    expect(ignoredOf({ workitem: ['^deliver-issue$'], PR: [] })).toEqual(['unknown key "workitem"', 'unknown key "PR"'])
+    expect(ignoredOf({ workitem: ['^deliver-issue$'], PR: [] })).toEqual(['unknown key "workitem" ignored', 'unknown key "PR" ignored'])
     expect(skillRulesOf({ workitem: ['^deliver-issue$'] })).toEqual(DEFAULT_SKILL_RULES)
-    expect(ignoredOf({ workItem: 'deliver$' })).toEqual(['"workItem" is not a list of strings'])
-    expect(ignoredOf({ pr: [1], wrapper: null })).toEqual(['"pr" is not a list of strings', '"wrapper" is not a list of strings'])
-    expect(ignoredOf({ workItem: ['(', '^deliver-issue$', '[a'] })).toEqual([
-      '"workItem" pattern "(" doesn\'t compile',
-      '"workItem" pattern "[a" doesn\'t compile',
+    expect(ignoredOf({ workItem: 'deliver$' })).toEqual(['"workItem" is not a list of strings, so its default applies'])
+    expect(ignoredOf({ pr: [1], wrapper: null })).toEqual([
+      '"pr" is not a list of strings, so its default applies',
+      '"wrapper" is not a list of strings, so its default applies',
     ])
+    expect(ignoredOf({ workItem: ['(', '^deliver-issue$', '[a'] })).toEqual([
+      '"workItem" pattern "(" doesn\'t compile, skipped',
+      '"workItem" pattern "[a" doesn\'t compile, skipped',
+    ])
+    // A long pattern is cut, so the reasons after it still fit in the event.
+    const [long] = ignoredOf({ pr: ['(' + 'x'.repeat(200)] })
+    expect(long!.length).toBeLessThan(90)
   })
 
   test('years and dates are not work items', async () => {

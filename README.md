@@ -381,7 +381,9 @@ is skipped, so a list where none compile matches nothing too. The hooks run
 them on every slash command, so keep them short and anchored. Sessions read the
 file when they start, after `/clear` or after `/reload-plugins`. A missing
 file leaves the defaults, and so does one that isn't valid JSON, which the
-session's events on the board say.
+session's events on the board say. They also name what the file ignored: a key
+other than these three, a value that isn't a list of strings (its default
+stays), and an expression that doesn't compile.
 
 ## Sessions in a sandbox
 

@@ -427,21 +427,21 @@ export const DEFAULT_SKILL_RULES: SkillRules = {
 // typo never brings back a name the list was written to drop.
 // Each thing it can't use (a file that isn't an object, an unknown key, a
 // value that isn't a list of strings, a pattern that doesn't compile) goes
-// into ignored, so the board can say why a default still applies.
+// into ignored, worded to say what that leaves, so the board can show it.
 export function skillRulesOf(json: unknown, ignored: string[] = []): SkillRules {
   const rules = { ...DEFAULT_SKILL_RULES }
   if (!json || typeof json !== 'object' || Array.isArray(json)) {
-    ignored.push('not an object')
+    ignored.push('not a JSON object, so every default applies')
     return rules
   }
   const keys = ['workItem', 'pr', 'wrapper'] as const
   for (const key of Object.keys(json))
-    if (!(keys as readonly string[]).includes(key)) ignored.push(`unknown key "${key}"`)
+    if (!(keys as readonly string[]).includes(key)) ignored.push(`unknown key "${key}" ignored`)
   for (const key of keys) {
     if (!(key in json)) continue
     const list = (json as Record<string, unknown>)[key]
     if (!Array.isArray(list) || !list.every((p) => typeof p === 'string')) {
-      ignored.push(`"${key}" is not a list of strings`)
+      ignored.push(`"${key}" is not a list of strings, so its default applies`)
       continue
     }
     const own: RegExp[] = []
@@ -449,7 +449,7 @@ export function skillRulesOf(json: unknown, ignored: string[] = []): SkillRules 
       try {
         own.push(new RegExp(p, 'i'))
       } catch {
-        ignored.push(`"${key}" pattern ${JSON.stringify(p)} doesn't compile`)
+        ignored.push(`"${key}" pattern ${JSON.stringify(clip(p, 40))} doesn't compile, skipped`)
       }
     }
     rules[key] = own

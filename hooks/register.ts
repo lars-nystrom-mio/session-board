@@ -370,7 +370,7 @@ async function loadSkillRules($: EngineInterface, dir: string): Promise<string |
     // Windows PowerShell and Notepad can save it with a byte-order mark.
     const ignored: string[] = []
     skillRules = skillRulesOf(JSON.parse((await $.fs.read(path)).replace(/^\u{FEFF}/u, '')), ignored)
-    return ignored.length ? `skills.json: ignored ${clip(ignored.join('; '), 160)}; defaults apply there` : null
+    return ignored.length ? clip(`skills.json: ${ignored.join('; ')}`) : null
   } catch (e) {
     skillRules = DEFAULT_SKILL_RULES
     return `skills.json unreadable, default skill rules apply: ${clip(String(e), 120)}`
