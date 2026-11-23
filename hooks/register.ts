@@ -406,7 +406,10 @@ async function init($: EngineInterface, cwd: string, interactive: boolean, reaso
   // `claude --resume` keeps the session id and restarts the cost from 0, so
   // what the ended board spent today carries over into the baseline. /clear
   // never gets here: it gives the session a new id.
-  if (previous && board !== previous) Object.assign(board, resumedCost(previous, now()))
+  if (previous && board !== previous) {
+    let current: number | null = null
+    try { current = (await $.session.usage()).cost?.usd ?? null } catch {}
+    Object.assign(board, resumedCost(previous, now(), current))  }
   board.cwd = cwd
   board.interactive = interactive
   board.tools = []

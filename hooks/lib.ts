@@ -160,11 +160,17 @@ export function costDayOf(prev: CostDay | null | undefined, before: number | nul
 // cost starts again from 0. So the carried total is a reset taken at once: the
 // fresh board starts at 0 with a baseline below 0 by what the ended one spent
 // today, and the first refresh can't mistake the new total for more of the old.
-export function resumedCost(previous: Pick<Board, 'costUsd' | 'costDay' | 'startedAt'>, now: number): { costUsd: number | null; costDay: CostDay | null } {
+// `current` is the process's cost at load. If it already holds the ended
+// board's total, the cost carried on (no path known to do that), and the
+// board keeps the total and its baseline as they were.
+export function resumedCost(previous: Pick<Board, 'costUsd' | 'costDay' | 'startedAt'>, now: number, current: number | null): { costUsd: number | null; costDay: CostDay | null } {
   const usd = previous.costUsd
   if (typeof usd !== 'number') return { costUsd: null, costDay: null }
   const day = localDay(now)
   const prev = previous.costDay
+  if (current !== null && usd > 0 && current >= usd) {
+    return { costUsd: usd, costDay: prev ?? { day, usd: localDay(previous.startedAt) === day ? 0 : usd } }
+  }
   // A file from older hooks has no baseline: it counts whole if it started today.
   const spent = prev ? (prev.day === day ? usd - prev.usd : 0) : (localDay(previous.startedAt) === day ? usd : 0)
   return { costUsd: 0, costDay: { day, usd: spent ? -spent : 0 } }
