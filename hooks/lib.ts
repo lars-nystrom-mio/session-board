@@ -425,17 +425,32 @@ export const DEFAULT_SKILL_RULES: SkillRules = {
 // out, or not a list of strings, keeps its default. A bad regex skips that
 // entry only, so a list where none compile matches nothing, as [] does: a
 // typo never brings back a name the list was written to drop.
-export function skillRulesOf(json: unknown): SkillRules {
+// Each thing it can't use (a file that isn't an object, an unknown key, a
+// value that isn't a list of strings, a pattern that doesn't compile) goes
+// into ignored, so the board can say why a default still applies.
+export function skillRulesOf(json: unknown, ignored: string[] = []): SkillRules {
   const rules = { ...DEFAULT_SKILL_RULES }
-  if (!json || typeof json !== 'object' || Array.isArray(json)) return rules
-  for (const key of ['workItem', 'pr', 'wrapper'] as const) {
+  if (!json || typeof json !== 'object' || Array.isArray(json)) {
+    ignored.push('not an object')
+    return rules
+  }
+  const keys = ['workItem', 'pr', 'wrapper'] as const
+  for (const key of Object.keys(json))
+    if (!(keys as readonly string[]).includes(key)) ignored.push(`unknown key "${key}"`)
+  for (const key of keys) {
+    if (!(key in json)) continue
     const list = (json as Record<string, unknown>)[key]
-    if (!Array.isArray(list) || !list.every((p) => typeof p === 'string')) continue
+    if (!Array.isArray(list) || !list.every((p) => typeof p === 'string')) {
+      ignored.push(`"${key}" is not a list of strings`)
+      continue
+    }
     const own: RegExp[] = []
     for (const p of list as string[]) {
       try {
         own.push(new RegExp(p, 'i'))
-      } catch {}
+      } catch {
+        ignored.push(`"${key}" pattern ${JSON.stringify(p)} doesn't compile`)
+      }
     }
     rules[key] = own
   }

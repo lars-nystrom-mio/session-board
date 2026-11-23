@@ -357,7 +357,7 @@ async function removeFiles($: EngineInterface, paths: string[]) {
 // skills.json in the board folder, read at each load before the board is
 // ready, so a session's first prompt already gets its rules. A missing file
 // leaves the default skill rules, and so does a broken one, which the answer
-// names for the board's events.
+// names for the board's events. So does each part skillRulesOf can't use.
 let skillRules: SkillRules = DEFAULT_SKILL_RULES
 
 async function loadSkillRules($: EngineInterface, dir: string): Promise<string | null> {
@@ -368,8 +368,9 @@ async function loadSkillRules($: EngineInterface, dir: string): Promise<string |
       return null
     }
     // Windows PowerShell and Notepad can save it with a byte-order mark.
-    skillRules = skillRulesOf(JSON.parse((await $.fs.read(path)).replace(/^\u{FEFF}/u, '')))
-    return null
+    const ignored: string[] = []
+    skillRules = skillRulesOf(JSON.parse((await $.fs.read(path)).replace(/^\u{FEFF}/u, '')), ignored)
+    return ignored.length ? `skills.json: ignored ${clip(ignored.join('; '), 160)}; defaults apply there` : null
   } catch (e) {
     skillRules = DEFAULT_SKILL_RULES
     return `skills.json unreadable, default skill rules apply: ${clip(String(e), 120)}`

@@ -123,6 +123,26 @@ describe('summaries', () => {
     expect(skillWorkItem('order-delivery', '1234', skillRulesOf({ workItem: ['^(deliver-issue$'] }))).toBe(null)
   })
 
+  test('skills.json says what it ignored', async () => {
+    const ignoredOf = (json: unknown) => {
+      const ignored: string[] = []
+      skillRulesOf(json, ignored)
+      return ignored
+    }
+    expect(ignoredOf({})).toEqual([])
+    expect(ignoredOf({ workItem: ['^deliver-issue$'], pr: [], wrapper: ['^every$'] })).toEqual([])
+    for (const json of [null, 'x', 42, []]) expect(ignoredOf(json)).toEqual(['not an object'])
+    // A misspelled key keeps the defaults, and says so.
+    expect(ignoredOf({ workitem: ['^deliver-issue$'], PR: [] })).toEqual(['unknown key "workitem"', 'unknown key "PR"'])
+    expect(skillRulesOf({ workitem: ['^deliver-issue$'] })).toEqual(DEFAULT_SKILL_RULES)
+    expect(ignoredOf({ workItem: 'deliver$' })).toEqual(['"workItem" is not a list of strings'])
+    expect(ignoredOf({ pr: [1], wrapper: null })).toEqual(['"pr" is not a list of strings', '"wrapper" is not a list of strings'])
+    expect(ignoredOf({ workItem: ['(', '^deliver-issue$', '[a'] })).toEqual([
+      '"workItem" pattern "(" doesn\'t compile',
+      '"workItem" pattern "[a" doesn\'t compile',
+    ])
+  })
+
   test('years and dates are not work items', async () => {
     expect(workItemOf('2026-10-31', true)).toBe(null)
     expect(workItemOf('since 2026/10, see 10/2026 or 31.10.2026', true)).toBe(null)
