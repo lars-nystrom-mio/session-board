@@ -41,9 +41,10 @@ install it and how to serve the page. This file is for working on it.
   running total, so each session counts `costUsd - costDay.usd` when `costDay`
   (set by `costDayOf` in `lib.ts` at the first cost refresh of each local day)
   is today's; a file without `costDay` counts whole only if it started today.
-  Sandboxed files never count. A board made fresh after `/clear` or a resume
-  keeps the ended board's `costUsd` and `costDay`, and a total that drops
-  counts as a reset. It shows the
+  Sandboxed files never count. A board made fresh over an ended file with the
+  same session id keeps its `costUsd` and `costDay`, and a total that drops
+  counts as a reset. `/clear` never takes that path: it gives the session a
+  new id and its cost starts again near 0. It shows the
   **queue** form and list only when `GET api/queue` answers, so it still works
   under `python -m http.server`. It also lists `sandboxed/`, status files that
   sessions in a sandbox write through a mount. Those are untrusted: `defang()`
@@ -230,10 +231,11 @@ SESSION_BOARD_DIR=<scratch dir> claude -p --plugin-dir . --model haiku "<prompt 
 
 ## Not verified yet
 
-- Whether a resumed session's `costUsd` restarts at 0 or carries the earlier
-  cost. `costDayOf` handles either, as long as the ended status file is there.
-  That needs `/clear` and a resume to keep the session id; with a new id the
-  old and new files would both count the carried cost.
+- Whether `claude --resume` keeps the session id, and whether its `costUsd`
+  restarts at 0 or carries the earlier cost. `costDayOf` handles either when
+  the id is kept and the ended status file is there; with a new id and a
+  carried cost the old and new files would both count it (#63). `/clear` is
+  settled: new id, cost from 0, so it counts once.
 - An actual start from the queue: the Windows Terminal tab, that
   `--session-id` gives the status file the name the queue waits for, and that
   a delivery run calls `board_status` at its end without being told to.
