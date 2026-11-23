@@ -240,7 +240,9 @@ SESSION_BOARD_DIR=<scratch dir> claude -p --plugin-dir . --model haiku "<prompt 
 
 - Whether `/resume` inside a running session gives the same id and cost as
   `claude --resume` (same id, cost carried on; checked headless in #63), or
-  carries the cost of the session it leaves into the one it opens.
+  carries the cost of the session it leaves into the one it opens, and what
+  a fork (`claude --resume --fork-session`) does. A new id with a carried
+  cost would count it in both the old and the new file (#63).
 - An actual start from the queue: the Windows Terminal tab, that
   `--session-id` gives the status file the name the queue waits for, and that
   a delivery run calls `board_status` at its end without being told to.
