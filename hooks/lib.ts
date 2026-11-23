@@ -436,7 +436,7 @@ export function skillRulesOf(json: unknown, ignored: string[] = []): SkillRules 
   }
   const keys = ['workItem', 'pr', 'wrapper'] as const
   for (const key of Object.keys(json))
-    if (!(keys as readonly string[]).includes(key)) ignored.push(`unknown key "${key}" ignored`)
+    if (!(keys as readonly string[]).includes(key)) ignored.push(`unknown key ${clip(JSON.stringify(key), 42)} ignored`)
   for (const key of keys) {
     if (!(key in json)) continue
     const list = (json as Record<string, unknown>)[key]
@@ -449,7 +449,7 @@ export function skillRulesOf(json: unknown, ignored: string[] = []): SkillRules 
       try {
         own.push(new RegExp(p, 'i'))
       } catch {
-        ignored.push(`"${key}" pattern ${JSON.stringify(clip(p, 40))} doesn't compile, skipped`)
+        ignored.push(`"${key}" pattern ${clip(JSON.stringify(p), 42)} doesn't compile, skipped`)
       }
     }
     rules[key] = own

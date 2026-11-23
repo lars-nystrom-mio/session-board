@@ -145,8 +145,11 @@ describe('summaries', () => {
       '"workItem" pattern "[a" doesn\'t compile, skipped',
     ])
     // A long pattern is cut, so the reasons after it still fit in the event.
-    const [long] = ignoredOf({ pr: ['(' + 'x'.repeat(200)] })
-    expect(long!.length).toBeLessThan(90)
+    for (const json of [{ pr: ['(' + 'x'.repeat(200)] }, { pr: ['(' + '\\d'.repeat(100)] }, { ['k'.repeat(300)]: [] }]) {
+      const [long] = ignoredOf(json)
+      expect(long!.length).toBeLessThan(90)
+    }
+    expect(ignoredOf({ 'a"b': [] })).toEqual(['unknown key "a\\"b" ignored'])
   })
 
   test('years and dates are not work items', async () => {

@@ -356,24 +356,27 @@ async function removeFiles($: EngineInterface, paths: string[]) {
 
 // skills.json in the board folder, read at each load before the board is
 // ready, so a session's first prompt already gets its rules. A missing file
-// leaves the default skill rules, and so does a broken one, which the answer
-// names for the board's events. So does each part skillRulesOf can't use.
+// leaves the default skill rules, and so does a broken one. The answer is the
+// lines for the board's events: why a file is unreadable, or one line for
+// each part skillRulesOf can't use, so a long list isn't cut short.
 let skillRules: SkillRules = DEFAULT_SKILL_RULES
 
-async function loadSkillRules($: EngineInterface, dir: string): Promise<string | null> {
+async function loadSkillRules($: EngineInterface, dir: string): Promise<string[]> {
   const path = `${dir}/skills.json`
   try {
     if (!(await $.fs.exists(path))) {
       skillRules = DEFAULT_SKILL_RULES
-      return null
+      return []
     }
     // Windows PowerShell and Notepad can save it with a byte-order mark.
     const ignored: string[] = []
     skillRules = skillRulesOf(JSON.parse((await $.fs.read(path)).replace(/^\u{FEFF}/u, '')), ignored)
-    return ignored.length ? clip(`skills.json: ${ignored.join('; ')}`) : null
+    // A file wrong all over still leaves room for the session's own events.
+    const shown = ignored.length > 5 ? [...ignored.slice(0, 4), `and ${ignored.length - 4} more`] : ignored
+    return shown.map((reason) => `skills.json: ${reason}`)
   } catch (e) {
     skillRules = DEFAULT_SKILL_RULES
-    return `skills.json unreadable, default skill rules apply: ${clip(String(e), 120)}`
+    return [`skills.json unreadable, default skill rules apply: ${clip(String(e), 120)}`]
   }
 }
 
@@ -391,7 +394,7 @@ async function init($: EngineInterface, cwd: string, interactive: boolean, reaso
   const dir = await boardDir($)
   const id = await $.session.id()
   file = `${dir}/sessions/${id}.json`
-  const skillsNote = await loadSkillRules($, dir)
+  const skillsNotes = await loadSkillRules($, dir)
 
   // A reload of this module mid-session keeps what the file already says.
   let previous: Board | null = null
@@ -435,7 +438,7 @@ async function init($: EngineInterface, cwd: string, interactive: boolean, reaso
     board.repo = repo ? { name: repo.name, root: repo.root, remote: repo.remote } : null
   } catch {}
   event('session', previous && previous.state !== 'ended' ? 'board reloaded' : reason)
-  if (skillsNote) event('session', skillsNote)
+  for (const note of skillsNotes) event('session', note)
 
   try {
     boardTool = (await $.tool.register({ ...BOARD_STATUS_TOOL, isDeferred: false })).tool
