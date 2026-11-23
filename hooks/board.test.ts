@@ -1141,7 +1141,7 @@ describe('messages between sessions', () => {
 
 test('the board never gets in the way of a message to another session', async ($, on) => {
   on('session.send', () => ({ isDelivered: true }))
-  const result = await $.session.send({ to: 'session-board-57', text: 'hello' })
+  const result = await $.session.send({ to: 'session-board-57', text: 'hello', origin: { kind: 'model' } })
   expect(result.isDelivered).toBe(true)
 })
 
