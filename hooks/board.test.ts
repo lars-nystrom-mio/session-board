@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
-import { STALE_BOARD_MS, removeScript, staleBoards, costDayOf, localDay, resumedCost, addMessage, crossSessionMessage, peerNotice, sendTarget, MAX_MESSAGES, boardStatus, progressOf, progressText, boardPlan, planWaiting, plannedWork, pruneShells, shellReported, shellToolDone, SHELL_MAX_MS, addPrs, adoOrgOf, cronFired, cronToolDone, nextCronMatch, pruneCrons, CRON_EXPIRY_MS, WAKEUP_ID, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, stepSeen, streamed, toolEndSeen, childLabel, deriveState, freshBoard, memoryOf, parseMachine, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, housekeepingCommand, summarize, toolLabel, trimAgents, workItemOf, skillTakesWorkItem, skillWorkItem, skillRulesOf, DEFAULT_SKILL_RULES, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
+import { STALE_BOARD_MS, removeScript, staleBoards, costDayOf, localDay, addMessage, crossSessionMessage, peerNotice, sendTarget, MAX_MESSAGES, boardStatus, progressOf, progressText, boardPlan, planWaiting, plannedWork, pruneShells, shellReported, shellToolDone, SHELL_MAX_MS, addPrs, adoOrgOf, cronFired, cronToolDone, nextCronMatch, pruneCrons, CRON_EXPIRY_MS, WAKEUP_ID, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, stepSeen, streamed, toolEndSeen, childLabel, deriveState, freshBoard, memoryOf, parseMachine, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, housekeepingCommand, summarize, toolLabel, trimAgents, workItemOf, skillTakesWorkItem, skillWorkItem, skillRulesOf, DEFAULT_SKILL_RULES, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
 
 describe('summaries', () => {
   test('a tool call becomes one short line', async () => {
@@ -1174,32 +1174,6 @@ describe('cost per day', () => {
     expect(costDayOf(today, null, 1, at(21, 9), at(22, 18))).toEqual({ day: '2026-11-22', usd: 0 })
     // Reset across midnight: everything since counts.
     expect(costDayOf({ day: '2026-11-21', usd: 0 }, 8, 0.5, at(21, 9), at(22, 0, 1))).toEqual({ day: '2026-11-22', usd: 0 })
-  })
-
-  test('a resume starts the cost at 0 and keeps what was spent today', async () => {
-    const r = resumedCost({ costUsd: 5, costDay: { day: '2026-11-22', usd: 2 }, startedAt: at(21, 9) }, at(22, 18), 0)
-    expect(r).toEqual({ costUsd: 0, costDay: { day: '2026-11-22', usd: -3 } })
-    // The resumed run's first refresh passes the old total, and still isn't
-    // taken for more of it: 7 + 3 counts today, not 7 - 2.
-    expect(costDayOf(r.costDay, r.costUsd, 7, at(22, 18), at(22, 18, 5))).toEqual({ day: '2026-11-22', usd: -3 })
-    expect(costDayOf(r.costDay, r.costUsd, 0.5, at(22, 18), at(22, 18, 5))).toEqual({ day: '2026-11-22', usd: -3 })
-  })
-
-  test('a cost that carried on through the load keeps the old total and baseline', async () => {
-    const before = { day: '2026-11-22', usd: 2 }
-    expect(resumedCost({ costUsd: 5, costDay: before, startedAt: at(21, 9) }, at(22, 18), 5.1)).toEqual({ costUsd: 5, costDay: before })
-    expect(resumedCost({ costUsd: 4, startedAt: at(22, 9) }, at(22, 18), 4)).toEqual({ costUsd: 4, costDay: { day: '2026-11-22', usd: 0 } })
-    // No cost at load yet reads as a restart.
-    expect(resumedCost({ costUsd: 5, costDay: before, startedAt: at(21, 9) }, at(22, 18), null).costUsd).toBe(0)
-  })
-
-  test('a resume counts an ended board from another day as nothing today', async () => {
-    expect(resumedCost({ costUsd: 5, costDay: { day: '2026-11-21', usd: 1 }, startedAt: at(21, 9) }, at(22, 9), 0))
-      .toEqual({ costUsd: 0, costDay: { day: '2026-11-22', usd: 0 } })
-    // Older hooks wrote no baseline: the whole cost counts if it started today.
-    expect(resumedCost({ costUsd: 4, startedAt: at(22, 9) }, at(22, 18), 0)).toEqual({ costUsd: 0, costDay: { day: '2026-11-22', usd: -4 } })
-    expect(resumedCost({ costUsd: 4, startedAt: at(21, 9) }, at(22, 18), 0)).toEqual({ costUsd: 0, costDay: { day: '2026-11-22', usd: 0 } })
-    expect(resumedCost({ costUsd: null, costDay: null, startedAt: at(22, 9) }, at(22, 18), 0)).toEqual({ costUsd: null, costDay: null })
   })
 })
 

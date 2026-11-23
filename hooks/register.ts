@@ -20,7 +20,7 @@ import {
   adoPrShowArgv,
   cacheTtlOf,
   costDayOf,
-  resumedCost,
+  localDay,
   agentStatusOf,
   boardPlan,
   boardStatus,
@@ -403,13 +403,17 @@ async function init($: EngineInterface, cwd: string, interactive: boolean, reaso
   } catch {}
 
   board = previous && previous.state !== 'ended' ? previous : freshBoard(id, cwd, now())
-  // `claude --resume` keeps the session id and restarts the cost from 0, so
-  // what the ended board spent today carries over into the baseline. /clear
-  // never gets here: it gives the session a new id.
+  // `claude --resume` keeps the session id and its cost carries on from the
+  // ended board (checked in #63), so the day baseline carries on too, or today
+  // would count it all. /clear never gets here: it gives the session a new id.
   if (previous && board !== previous) {
-    let current: number | null = null
-    try { current = (await $.session.usage()).cost?.usd ?? null } catch {}
-    Object.assign(board, resumedCost(previous, now(), current))  }
+    board.costUsd = previous.costUsd ?? null
+    // A file from older hooks has no baseline: what it had counts as spent
+    // today only if it started today.
+    board.costDay = previous.costDay ?? (typeof previous.costUsd === 'number'
+      ? { day: localDay(now()), usd: localDay(previous.startedAt) === localDay(now()) ? 0 : previous.costUsd }
+      : null)
+  }
   board.cwd = cwd
   board.interactive = interactive
   board.tools = []
