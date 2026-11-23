@@ -1250,3 +1250,60 @@ describe('old status files', () => {
     expect(script.endsWith('; exit 0')).toBe(true)
   })
 })
+
+// #73: a model stream that fails after some chunks reaches the turn.step
+// hook's .catch, whose next(e) would send the request a second time.
+describe('turn.step failures', () => {
+  const step = (agentId?: string) => ({ turnId: 't1', index: 0, model: 'm', messageCount: 1, ...(agentId ? { agentId } : {}) })
+
+  async function drain(s: AsyncIterable<unknown>): Promise<{ chunks: unknown[]; failed: boolean }> {
+    const chunks: unknown[] = []
+    let failed = false
+    try {
+      for await (const c of s) chunks.push(c)
+    } catch {
+      failed = true
+    }
+    return { chunks, failed }
+  }
+
+  for (const agentId of [undefined, 'a1']) {
+    test(`a stream that fails mid-stream is not requested again (${agentId ? 'subagent' : 'main'})`, async ($, on) => {
+      let requests = 0
+      on('turn.step', async function* () {
+        requests++
+        yield { kind: 'text' as const, index: 0, text: 'part ' + requests }
+        throw new Error('stream broke')
+      })
+      const { chunks, failed } = await drain($.turn.step(step(agentId)))
+      expect(requests).toBe(1)
+      expect(chunks).toEqual([{ kind: 'text', index: 0, text: 'part 1' }])
+      expect(failed).toBe(true)
+    })
+  }
+
+  test('a request that fails before any chunk is not sent again', async ($, on) => {
+    let requests = 0
+    on('turn.step', async function* () {
+      requests++
+      throw new Error('request failed')
+    })
+    const { chunks, failed } = await drain($.turn.step(step()))
+    expect(requests).toBe(1)
+    expect(chunks).toEqual([])
+    expect(failed).toBe(true)
+  })
+
+  test('a stream that ends normally passes through once', async ($, on) => {
+    let requests = 0
+    on('turn.step', async function* () {
+      requests++
+      yield { kind: 'text' as const, index: 0, text: 'hi' }
+      return { turnId: 't1', index: 0, answer: 'hi', toolUses: [], stopReason: 'end_turn' as const, usage: null }
+    })
+    const { chunks, failed } = await drain($.turn.step(step()))
+    expect(requests).toBe(1)
+    expect(chunks).toEqual([{ kind: 'text', index: 0, text: 'hi' }])
+    expect(failed).toBe(false)
+  })
+})

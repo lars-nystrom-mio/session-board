@@ -768,7 +768,12 @@ export const register: Register = (on) => {
     } catch {}
     return result
   }).catch(async function* ($, e, next) {
-    return yield* next(e) // the board only observes: on failure the request goes on
+    // The board only observes: on failure the request goes on. Once next has
+    // been called, the failure can be the model stream's own, and there next(e)
+    // would send the request again after its first chunks were shown (#73), so
+    // the hook steps aside and the failure goes on as it would without the board.
+    if (next.called) throw new Error(next.error.message ?? 'turn.step failed')
+    return yield* next(e)
   })
 
   on('agent.spawn', async ($, e, next) => {

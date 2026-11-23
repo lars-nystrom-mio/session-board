@@ -189,6 +189,10 @@ SESSION_BOARD_DIR=<scratch dir> claude -p --plugin-dir . --model haiku "<prompt 
 - `turn.step` streams: its hook and its `.catch` handler are both
   `async function*`, and forward the stream with `yield* next(e)`, or
   through `streamed()` in `lib.ts`, which forwards it and notes each chunk.
+  The `.catch` handler calls `next(e)` only when the hook hadn't
+  (`next.called`): a model stream that fails mid-stream reaches it, and there
+  `next(e)` sends the request again after its first chunks were shown, so it
+  rethrows instead (#73).
 
 ## What the events look like in practice
 
