@@ -1449,34 +1449,45 @@ const firstSentence = (p) => p.split(/(?<=[.?!])\s|\n/)[0].slice(0, 90)
 
 // Text pasted into a prompt arrives as <pasted_content id="…">…</pasted_content id="…">,
 // which the terminal shows as the paste itself. A prompt the hooks clipped
-// ends in "…", maybe inside a paste or a tag: there an unclosed paste is cut,
-// and anywhere else an opener with no closer is someone typing the markup.
+// ends in "…", maybe inside a paste or a tag.
 // Kept in step by hand with promptParts and promptLine in hooks/lib.ts.
 const PASTE_OPEN = /<pasted_content id="([^"<>]*)">/
+const TAG_STARTS = ['<pasted_content', '</pasted_content']
 const PASTE_SHOWN_LINES = 12   // a longer paste starts folded in the drawer
 function promptParts(text) {
   let rest = String(text ?? '')
   const clipped = rest.endsWith('…')
   if (clipped) {
     rest = rest.slice(0, -1)
-    // A tag the clip cut in two.
+    // A tag the clip cut in two: from "<pasted" or "</pasted" on.
     const i = rest.lastIndexOf('<')
     const head = i < 0 || rest.includes('>', i) ? '' : (rest.slice(i).match(/^<\/?\w*/)?.[0] ?? '')
-    if (head.length > 1 && ['<pasted_content', '</pasted_content'].some((t) => t.startsWith(head) || (head === t && /^\s/.test(rest.slice(i + head.length))))) rest = rest.slice(0, i)
+    if (head.replace('/', '').length >= 7 && TAG_STARTS.some((t) => t.startsWith(head))) rest = rest.slice(0, i)
   }
   const parts = []
+  let typed = ''
   for (let o = PASTE_OPEN.exec(rest); o; o = PASTE_OPEN.exec(rest)) {
     const after = rest.slice(o.index + o[0].length)
-    const id = o[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    const c = new RegExp(`</pasted_content(?: id="${id}")?>`).exec(after)
-    if (!c && !clipped) break
-    parts.push({ text: rest.slice(0, o.index) })
+    const id = (o[1] ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    // Its own id closes a paste; a bare closing tag only when none with the id follows.
+    const c = new RegExp(`</pasted_content id="${id}">`).exec(after) ?? /<\/pasted_content>/.exec(after)
+    // Unclosed: cut by the clip if the paste starts on a new line and is the
+    // prompt's last; otherwise someone typed the markup, which stays text.
+    if (!c && !(clipped && (after === '' || /^[ \t]*\n/.test(after)) && !PASTE_OPEN.test(after))) {
+      typed += rest.slice(0, o.index + o[0].length)
+      rest = after
+      continue
+    }
+    parts.push({ text: typed + rest.slice(0, o.index) })
+    typed = ''
     // Blank lines around a paste go; a first line's indent stays.
     parts.push({ paste: (c ? after.slice(0, c.index) : after).replace(/^\s*\n|\n\s*$/g, ''), cut: !c })
     rest = c ? after.slice(c.index + c[0].length) : ''
   }
-  parts.push({ text: rest })
-  const out = parts.map((p) => (p.paste === undefined ? { text: p.text.trim() } : p)).filter((p) => p.paste !== undefined || p.text)
+  parts.push({ text: typed + rest })
+  const out = parts
+    .map((p) => (p.paste !== undefined ? p : { text: p.text.trim() }))
+    .filter((p) => p.paste !== undefined || p.text)
   const last = out[out.length - 1]
   if (clipped && last && last.paste === undefined) last.text += '…'
   return out
@@ -1487,7 +1498,7 @@ const pasteLabel = (p) => {
   return `pasted${n ? ` · ${n} line${n === 1 ? '' : 's'}` : ''}${p.cut ? ', cut short' : ''}`
 }
 // A prompt on one line (titles, tiles, rows, the timeline): each paste becomes a short mark.
-const promptLine = (text) => promptParts(text).map((p) => (p.paste === undefined ? p.text : `[${pasteLabel(p)}]`)).join(' ')
+const promptLine = (text) => promptParts(text).map((p) => (p.paste === undefined ? p.text.replace(/\s+/g, ' ') : `[${pasteLabel(p)}]`)).join(' ')
 // The drawer's prompt: what the person wrote as it is, each paste in a monospace block that keeps its columns.
 const promptHtml = (text) => promptParts(text).map((p) => (p.paste === undefined
   ? `<div class="said">${esc(p.text)}</div>`

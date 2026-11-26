@@ -68,7 +68,8 @@ install it and how to serve the page. This file is for working on it.
   `promptLine`. `promptParts` splits a paste out, and the page keeps a copy
   of it and `promptLine` in step with `lib.ts` by hand: one-line places show
   `[pasted · N lines]`, the drawer a monospace block that keeps its columns
-  (`promptHtml`). Typed markup with no closing tag stays text.
+  (`promptHtml`). Typed markup with no closing tag stays text, unless the
+  prompt was clipped (ends in "…") and the opener is the last, at a line end.
   Permission is asked from the header's **turn on**, and only in a secure context.
   A session's `plan` draws as a strip above the tiles of its group (`planOf`
   checks its shape, `planHtml` draws it). Each item's state comes from the

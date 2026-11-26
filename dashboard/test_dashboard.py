@@ -268,7 +268,7 @@ class MessagesView(unittest.TestCase):
         self.assertEqual(pre.inner_text(), '╭────┬─────╮\n│ id │ qty │\n├────┼─────┤\n│ k1 │   1 │\n╰────┴─────╯')
         self.assertEqual(pre.evaluate('(p) => getComputedStyle(p).whiteSpace'), 'pre')
         self.assertEqual(quote.locator('.paste summary').inner_text(), 'pasted · 5 lines')
-        # A clipped prompt (older hooks kept the paste in the timeline) whose paste lost its closing tag.
+        # A clipped prompt whose paste lost its closing tag.
         timeline = self.page.locator('#d-body .timeline').inner_text()
         self.assertIn('[pasted · 1 line, cut short]', timeline)
         self.assertNotIn('pasted_content', timeline)

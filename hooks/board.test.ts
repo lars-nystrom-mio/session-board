@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
-import { STALE_BOARD_MS, removeScript, staleBoards, clipLines, promptParts, promptLine, costDayOf, localDay, addMessage, crossSessionMessage, peerNotice, sendTarget, MAX_MESSAGES, boardStatus, progressOf, progressText, boardPlan, planWaiting, plannedWork, pruneShells, shellReported, shellToolDone, SHELL_MAX_MS, addPrs, adoOrgOf, cronFired, cronToolDone, nextCronMatch, pruneCrons, CRON_EXPIRY_MS, WAKEUP_ID, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, stepSeen, streamed, toolEndSeen, childLabel, deriveState, freshBoard, memoryOf, parseMachine, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, housekeepingCommand, summarize, toolLabel, trimAgents, workItemOf, skillTakesWorkItem, skillWorkItem, skillRulesOf, DEFAULT_SKILL_RULES, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
+import { STALE_BOARD_MS, removeScript, staleBoards, clip, clipLines, promptParts, promptLine, costDayOf, localDay, addMessage, crossSessionMessage, peerNotice, sendTarget, MAX_MESSAGES, boardStatus, progressOf, progressText, boardPlan, planWaiting, plannedWork, pruneShells, shellReported, shellToolDone, SHELL_MAX_MS, addPrs, adoOrgOf, cronFired, cronToolDone, nextCronMatch, pruneCrons, CRON_EXPIRY_MS, WAKEUP_ID, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, stepSeen, streamed, toolEndSeen, childLabel, deriveState, freshBoard, memoryOf, parseMachine, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, housekeepingCommand, summarize, toolLabel, trimAgents, workItemOf, skillTakesWorkItem, skillWorkItem, skillRulesOf, DEFAULT_SKILL_RULES, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
 
 describe('summaries', () => {
   test('a tool call becomes one short line', async () => {
@@ -589,6 +589,20 @@ describe('pasted text in a prompt', () => {
     const typed = 'why does the tile show <pasted_content id="1"> instead of the paste? fix it'
     expect(promptParts(typed)).toEqual([{ text: typed }])
     expect(promptParts('see <pasted_content> here')).toEqual([{ text: 'see <pasted_content> here' }])
+    // Clipped too, as the timeline's 200 characters clip it.
+    expect(promptLine(clip(`${typed} ${'and more '.repeat(30)}`, 200))).toMatch(/^why does the tile show <pasted_content id="1"> instead of the paste\? fix it and more .*…$/)
+    // A typed opener doesn't hide a real paste after it.
+    expect(promptParts('what is <pasted_content id="x"> here: <pasted_content id="2">\n| a |\n</pasted_content id="2">'))
+      .toEqual([{ text: 'what is <pasted_content id="x"> here:' }, { paste: '| a |', cut: false }])
+  })
+
+  test('a bare closing tag inside a paste is part of it', async () => {
+    expect(promptParts('<pasted_content id="5">\nx\n</pasted_content>\ny\n</pasted_content id="5">'))
+      .toEqual([{ paste: 'x\n</pasted_content>\ny', cut: false }])
+  })
+
+  test('on one line, typed line breaks are spaces', async () => {
+    expect(promptLine('Fix the build\nthen run tests')).toBe('Fix the build then run tests')
   })
 
   test('a clipped prompt cuts its paste and drops half a tag', async () => {
@@ -603,6 +617,7 @@ describe('pasted text in a prompt', () => {
     expect(promptLine('Look: <pasted_content id="4">…')).toBe('Look: [pasted, cut short]')
     // A "<" the person typed stays.
     expect(promptParts('if a < b then…')).toEqual([{ text: 'if a < b then…' }])
+    expect(promptParts('wrap it in <p…')).toEqual([{ text: 'wrap it in <p…' }])
   })
 
   test('clipLines keeps line breaks and cuts at the limit', async () => {
