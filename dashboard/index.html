@@ -436,6 +436,10 @@
   .kv dt { color: var(--faint); }
   .kv dd { margin: 0; font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
   .quote { white-space: pre-wrap; font-size: 13px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+  .quote .paste { white-space: normal; margin: 8px 0; padding-left: 10px; border-left: 2px solid var(--line); }
+  .quote .paste:first-child { margin-top: 0; } .quote .paste:last-child { margin-bottom: 0; }
+  .quote .paste summary { cursor: pointer; font-family: var(--mono); font-size: 11px; color: var(--faint); }
+  .quote .paste pre { margin: 6px 0 0; font-family: var(--mono); font-size: 12px; line-height: 1.15; white-space: pre; overflow-x: auto; }
   .copy {
     margin-top: 8px; font-family: var(--mono); font-size: 11.5px; background: var(--card); border: 1px solid var(--line);
     border-radius: 6px; padding: 4px 10px; cursor: pointer; color: var(--muted);
@@ -1030,7 +1034,7 @@ function memoryDrawerHtml() {
   const stateCls = { waiting: 'you', running: 'run', background: 'run' }
   const rows = list.map((s) => {
     const total = memTotal(s.memory)
-    const what = s.workItem ? `#${s.workItem}` : s.tabTitle || (s.prompt ? firstSentence(s.prompt) : '')
+    const what = s.workItem ? `#${s.workItem}` : s.tabTitle || (s.prompt ? firstSentence(promptLine(s.prompt)) : '')
     return `<button class="mrow${total >= MEM_HOT_MB ? ' big' : ''}" data-session="${esc(s.sessionId)}">
       <span class="n">${mb(total)}</span>
       <span class="share"><i style="width:${((100 * total) / top).toFixed(1)}%"></i></span>
@@ -1184,13 +1188,13 @@ const nodeName = (id) => {
 const nodeSub = (id) => {
   const s = sessionById(id)
   if (!s) return 'not on the board'
-  return s.workItem ? `#${s.workItem}` : s.tabTitle || (s.prompt ? firstSentence(s.prompt) : s.sessionId.slice(0, 8))
+  return s.workItem ? `#${s.workItem}` : s.tabTitle || (s.prompt ? firstSentence(promptLine(s.prompt)) : s.sessionId.slice(0, 8))
 }
 const clipText = (x, n) => (x.length > n ? x.slice(0, n - 1) + '…' : x)
 // An event's text as shown: an older receipt, kept as a prompt, reads as a message.
 function eventText(e) {
   const m = e.kind === 'prompt' ? parseEnvelope(e.text) : null
-  return m ? `✉ from ${m.fromName}: ${m.body}` : e.text
+  return m ? `✉ from ${m.fromName}: ${m.body}` : e.kind === 'prompt' ? promptLine(e.text) : e.text
 }
 
 function msgBadgeHtml(s) {
@@ -1443,12 +1447,42 @@ const prName = (p) => `${p.host === 'github' ? '#' : '!'}${p.number}`
 
 const firstSentence = (p) => p.split(/(?<=[.?!])\s|\n/)[0].slice(0, 90)
 
+// Text pasted into a prompt arrives wrapped in <pasted_content id="…"> and
+// </pasted_content id="…">, which the terminal shows as the paste itself. The
+// hooks keep the prompt's first 600 characters, which can end inside a paste,
+// so a paste may have no closing tag (cut).
+const PASTE_OPEN = /<pasted_content(?:\s[^>]*)?>/
+const PASTE_CLOSE = /<\/pasted_content(?:\s[^>]*)?>/
+const PASTE_SHOWN_LINES = 12   // a longer paste starts folded in the drawer
+function promptParts(text) {
+  const parts = []
+  let rest = String(text ?? '')
+  for (let o = PASTE_OPEN.exec(rest); o; o = PASTE_OPEN.exec(rest)) {
+    parts.push({ text: rest.slice(0, o.index) })
+    rest = rest.slice(o.index + o[0].length)
+    const c = PASTE_CLOSE.exec(rest)
+    // Blank lines around a paste go; a first line's indent stays.
+    parts.push({ paste: (c ? rest.slice(0, c.index) : rest).replace(/^\s*\n|\n\s*$/g, ''), cut: !c })
+    rest = c ? rest.slice(c.index + c[0].length) : ''
+  }
+  parts.push({ text: rest })
+  return parts.map((p) => (p.paste === undefined ? { text: p.text.trim() } : p)).filter((p) => p.paste !== undefined || p.text)
+}
+const lineCount = (t) => t.split('\n').length
+const pasteLabel = (p) => `pasted · ${lineCount(p.paste)} line${lineCount(p.paste) === 1 ? '' : 's'}${p.cut ? ', cut short' : ''}`
+// A prompt on one line (titles, tiles, rows, the timeline): each paste becomes a short mark.
+const promptLine = (text) => promptParts(text).map((p) => (p.paste === undefined ? p.text : `[${pasteLabel(p)}]`)).join(' ')
+// The drawer's prompt: what the person wrote as it is, each paste in a monospace block that keeps its columns.
+const promptHtml = (text) => promptParts(text).map((p) => (p.paste === undefined
+  ? `<div class="said">${esc(p.text)}</div>`
+  : `<details class="paste"${lineCount(p.paste) <= PASTE_SHOWN_LINES ? ' open' : ''}><summary>${esc(pasteLabel(p))}</summary><pre>${esc(p.paste)}</pre></details>`)).join('')
+
 function titleOf(s) {
   if (s.workItem) {
     return `<span class="wi">#${esc(s.workItem)}</span>${s.skill ? `<span class="skill">${esc(s.skill.name)}</span>` : ''}`
   }
   if (s.skill) return `<span class="skill" style="font-size:14px;color:var(--text)">/${esc(s.skill.name)}</span>`
-  if (s.prompt) return esc(firstSentence(s.prompt))
+  if (s.prompt) return esc(firstSentence(promptLine(s.prompt)))
   return '<span style="color:var(--faint)">No prompt yet</span>'
 }
 
@@ -1483,7 +1517,8 @@ function tileHtml(s) {
     </div>
     <div class="title"><span class="tt">${titleOf(s)}</span>${done}${phase ? `<span class="phase${reported ? ' reported' : ''}"${reported ? ` title="reported ${esc(clock(s.progress.at))}"` : ''}>${esc(phase)}</span>` : ''}</div>`)
   // The title already shows the prompt's first sentence when there's no work item or skill.
-  const promptText = s.workItem || s.skill ? s.prompt : s.prompt?.slice(firstSentence(s.prompt).length).trim()
+  const line = s.prompt ? promptLine(s.prompt) : null
+  const promptText = s.workItem || s.skill ? line : line?.slice(firstSentence(line).length).trim()
   parts.push(`<p class="prompt">${esc(promptText)}</p>`)
 
   // One fixed slot: the question when the session needs you, otherwise what it's doing.
@@ -1883,7 +1918,7 @@ function render() {
   const rows = past.map((s) => `
     <button class="row" data-session="${esc(s.sessionId)}">
       <span class="p">${esc(projectOf(s))}${s.workItem ? ` · #${esc(s.workItem)}` : ''}${s.tabTitle ? ` · ${esc(s.tabTitle)}` : ''}</span>
-      <span class="x">${esc(s.skill ? '/' + s.skill.name : s.prompt || '')}</span>
+      <span class="x">${esc(s.skill ? '/' + s.skill.name : promptLine(s.prompt))}</span>
       <span class="w">${s.state === 'ended' ? `ended ${clock(s.updatedAt)}` : `no heartbeat since ${clock(s.updatedAt)}`}</span>
     </button>`).join('')
   if ($('rows').dataset.html !== rows) { $('rows').innerHTML = rows; $('rows').dataset.html = rows }
@@ -1996,7 +2031,7 @@ function drawerHtml(s) {
   }
 
   if (s.waiting) out.push(`<h3>Waiting for you</h3><div class="ask"><b>${esc(s.waiting.kind)}</b> · ${live(s.waiting.since)}<div class="d">${esc(s.waiting.detail)}</div></div>`)
-  if (s.prompt) out.push(`<h3>Last prompt</h3><div class="quote">${esc(s.prompt)}</div>`)
+  if (s.prompt) out.push(`<h3>Last prompt</h3><div class="quote">${promptHtml(s.prompt)}</div>`)
   if (s.skill) out.push(`<h3>Skill</h3><dl class="kv"><dt>skill</dt><dd>${esc(s.skill.name)}</dd>${s.skill.args ? `<dt>args</dt><dd>${esc(s.skill.args)}</dd>` : ''}${s.workItem ? `<dt>work item</dt><dd>#${esc(s.workItem)}</dd>` : ''}</dl>`)
 
   if (s.prs?.length) {
@@ -2432,7 +2467,7 @@ function noteTurn(s, now) {
 function notify(s, kind, took = 0, stall = null) {
   if (!NOTIFY_OK || notifyMute || Notification.permission !== 'granted') return
   const name = [projectOf(s), s.tabTitle].filter(Boolean).join(' · ')
-  const what = s.workItem ? `#${s.workItem}` : s.prompt ? firstSentence(s.prompt) : ''
+  const what = s.workItem ? `#${s.workItem}` : s.prompt ? firstSentence(promptLine(s.prompt)) : ''
   const title = { waiting: `Needs you: ${name}`, stall: `Looks stalled: ${name}` }[kind] || `Turn ended: ${name}`
   const reason = { question: 'Has a question', plan: 'Plan to approve' }[s.waiting?.kind] || 'Waiting for you'
   const body = kind === 'waiting'

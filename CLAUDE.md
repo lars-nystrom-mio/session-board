@@ -62,6 +62,10 @@ install it and how to serve the page. This file is for working on it.
   nor for a quiet stall counted from that sight (`blind` in `seen`), which may
   have begun before the page loaded.
   Sandboxed files never notify.
+  Text pasted into a prompt arrives in `<pasted_content id="…">` markup, which
+  the 600-character clip can cut before its closing tag. `promptParts` splits
+  it out: one-line places show `[pasted · N lines]` (`promptLine`), the
+  drawer a monospace block that keeps its columns (`promptHtml`).
   Permission is asked from the header's **turn on**, and only in a secure context.
   A session's `plan` draws as a strip above the tiles of its group (`planOf`
   checks its shape, `planHtml` draws it). Each item's state comes from the

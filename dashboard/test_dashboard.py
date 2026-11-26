@@ -49,6 +49,10 @@ S5 = 'eeeeeeee-1111-4000-8000-00000000000e'  # running, a background agent's Bas
 S6 = 'ffffffff-1111-4000-8000-00000000000f'  # running, a REPL script awaiting a test run
 
 
+# A prompt with a table pasted into it, as Claude Code hands it to the hooks.
+PASTED = 'Is this price from the basket? <pasted_content id="0840">\n╭────┬─────╮\n│ id │ qty │\n├────┼─────┤\n│ k1 │   1 │\n╰────┴─────╯\n</pasted_content id="0840"> Check it.'
+
+
 def stalls(now):
     """Two running sessions that look stalled and one that doesn't."""
     hung = board(S1, 'C:\\Workspace\\pipelines', 'running', 'watch build', now=now)
@@ -149,8 +153,9 @@ def write_boards(root: Path):
         board(D, 'C:\\Workspace.mioit\\Mio.Finance.Resurs.Api', 'idle', 'drift fixes', now=now, events=[
             {'t': now - (50 - i * 9) * MIN, 'kind': 'prompt', 'text': envelope('resurslogs-0e', 'c0', f'Analyzer: verdict {i}')}
             for i in range(5)]),
-        board(F, 'C:\\Workspace.mioit\\dotnet-upgrade-kit', 'idle', now=now, events=[
-            {'t': now - 70 * MIN, 'kind': 'prompt', 'text': envelope('mio-m3-sales-c7', 'c7', 'Please check these work items')}]),
+        {**board(F, 'C:\\Workspace.mioit\\dotnet-upgrade-kit', 'idle', now=now, events=[
+            {'t': now - 70 * MIN, 'kind': 'prompt', 'text': envelope('mio-m3-sales-c7', 'c7', 'Please check these work items')},
+            {'t': now - 6 * MIN, 'kind': 'prompt', 'text': PASTED[:60]}]), 'prompt': PASTED},
         busy(now),
         *plans(now)[0],
         *stalls(now),
@@ -249,6 +254,24 @@ class MessagesView(unittest.TestCase):
         slot = self.tile(D).locator('.slot').inner_text()
         self.assertIn('from resurslogs-0e: Analyzer: verdict 4', slot)
         self.assertNotIn('<cross-session-message', slot)
+
+    def test_a_pasted_table_keeps_its_columns_and_loses_the_markup(self):
+        title = self.tile(F).locator('.title').inner_text()
+        self.assertIn('Is this price from the basket?', title)
+        self.assertIn('[pasted · 5 lines] Check it.', self.tile(F).locator('.prompt').inner_text())
+        self.tile(F).click()
+        self.page.wait_for_selector('#d-body .quote .paste pre')
+        quote = self.page.locator('#d-body .quote')
+        self.assertNotIn('pasted_content', quote.inner_text())
+        self.assertEqual(quote.locator('.said').all_inner_texts(), ['Is this price from the basket?', 'Check it.'])
+        pre = quote.locator('.paste pre')
+        self.assertEqual(pre.inner_text(), '╭────┬─────╮\n│ id │ qty │\n├────┼─────┤\n│ k1 │   1 │\n╰────┴─────╯')
+        self.assertEqual(pre.evaluate('(p) => getComputedStyle(p).whiteSpace'), 'pre')
+        self.assertEqual(quote.locator('.paste summary').inner_text(), 'pasted · 5 lines')
+        # The timeline keeps 200 characters: a paste cut before its closing tag still reads as one.
+        timeline = self.page.locator('#d-body .timeline').inner_text()
+        self.assertIn('[pasted · 1 line, cut short]', timeline)
+        self.assertNotIn('pasted_content', timeline)
 
     def test_graph_matches_pairs_guesses_projects_and_keeps_strangers(self):
         self.open_messages()
