@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
-import { STALE_BOARD_MS, removeScript, staleBoards, costDayOf, localDay, addMessage, crossSessionMessage, peerNotice, sendTarget, MAX_MESSAGES, boardStatus, progressOf, progressText, boardPlan, planWaiting, plannedWork, pruneShells, shellReported, shellToolDone, SHELL_MAX_MS, addPrs, adoOrgOf, cronFired, cronToolDone, nextCronMatch, pruneCrons, CRON_EXPIRY_MS, WAKEUP_ID, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, stepSeen, streamed, toolEndSeen, childLabel, deriveState, freshBoard, memoryOf, parseMachine, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, housekeepingCommand, summarize, toolLabel, trimAgents, workItemOf, skillTakesWorkItem, skillWorkItem, skillRulesOf, DEFAULT_SKILL_RULES, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
+import { STALE_BOARD_MS, removeScript, staleBoards, clipLines, promptParts, promptLine, costDayOf, localDay, addMessage, crossSessionMessage, peerNotice, sendTarget, MAX_MESSAGES, boardStatus, progressOf, progressText, boardPlan, planWaiting, plannedWork, pruneShells, shellReported, shellToolDone, SHELL_MAX_MS, addPrs, adoOrgOf, cronFired, cronToolDone, nextCronMatch, pruneCrons, CRON_EXPIRY_MS, WAKEUP_ID, adoPrLink, adoPrLookupOf, adoPrShowArgv, adoRepoOf, cacheTtlOf, stepSeen, streamed, toolEndSeen, childLabel, deriveState, freshBoard, memoryOf, parseMachine, parseProbe, prLinksOf, prsOfTool, pushEvent, projectDirName, scansForPrs, sessionTitleOf, slashCommand, housekeepingCommand, summarize, toolLabel, trimAgents, workItemOf, skillTakesWorkItem, skillWorkItem, skillRulesOf, DEFAULT_SKILL_RULES, MAX_AGENTS, MAX_EVENTS, MEMORY_HISTORY, type ProcRec } from './lib'
 
 describe('summaries', () => {
   test('a tool call becomes one short line', async () => {
@@ -564,6 +564,51 @@ test('a housekeeping command keeps the skill and its progress report', async ($,
   await $.tool.call({ tool: 'Skill', skill: 'status', args: '' })
   await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't5', reason: 'answer' })
   expect((await status()).activeSkill).toBe('status')
+
+  // A pasted table keeps its rows in the prompt; the timeline marks the paste.
+  await turn('Is this from the basket? <pasted_content id="7">\r\n| a | b |\r\n| 1 | 2 |\r\n</pasted_content id="7"> Check it.', 't6')
+  board = await status()
+  expect(board.prompt).toBe('Is this from the basket? <pasted_content id="7">\n| a | b |\n| 1 | 2 |\n</pasted_content id="7"> Check it.')
+  expect(board.events.filter((e: { kind: string }) => e.kind === 'prompt').at(-1)?.text).toBe('Is this from the basket? [pasted · 2 lines] Check it.')
+})
+
+describe('pasted text in a prompt', () => {
+  test('a paste splits out with its rows and indent', async () => {
+    expect(promptParts('Why? <pasted_content id="1">\n\n  x | y\n  1 | 2\n\n</pasted_content id="1"> Fix it.'))
+      .toEqual([{ text: 'Why?' }, { paste: '  x | y\n  1 | 2', cut: false }, { text: 'Fix it.' }])
+    expect(promptLine('<pasted_content id="1">one</pasted_content> and <pasted_content id="2">a\nb</pasted_content id="2">'))
+      .toBe('[pasted · 1 line] and [pasted · 2 lines]')
+  })
+
+  test('a paste ends at its own closing tag', async () => {
+    expect(promptParts('<pasted_content id="9">x </pasted_content id="3"> y</pasted_content id="9">z'))
+      .toEqual([{ paste: 'x </pasted_content id="3"> y', cut: false }, { text: 'z' }])
+  })
+
+  test('the markup typed in a prompt stays text', async () => {
+    const typed = 'why does the tile show <pasted_content id="1"> instead of the paste? fix it'
+    expect(promptParts(typed)).toEqual([{ text: typed }])
+    expect(promptParts('see <pasted_content> here')).toEqual([{ text: 'see <pasted_content> here' }])
+  })
+
+  test('a clipped prompt cuts its paste and drops half a tag', async () => {
+    const long = clipLines(`Look: <pasted_content id="4">\n${'row\n'.repeat(200)}</pasted_content id="4"> after`, 600)
+    expect(long.endsWith('…')).toBe(true)
+    const parts = promptParts(long)
+    expect(parts).toHaveLength(2)
+    expect(parts[1]).toMatchObject({ cut: true })
+    expect(promptLine(long)).toMatch(/^Look: \[pasted · \d+ lines, cut short\]$/)
+    expect(promptParts('Look at this <pasted_cont…')).toEqual([{ text: 'Look at this…' }])
+    expect(promptParts('Look: <pasted_content id="4">\nrow\nrow\n</pasted_cont…')).toEqual([{ text: 'Look:' }, { paste: 'row\nrow', cut: true }])
+    expect(promptLine('Look: <pasted_content id="4">…')).toBe('Look: [pasted, cut short]')
+    // A "<" the person typed stays.
+    expect(promptParts('if a < b then…')).toEqual([{ text: 'if a < b then…' }])
+  })
+
+  test('clipLines keeps line breaks and cuts at the limit', async () => {
+    expect(clipLines('  a\r\nb\rc  ', 100)).toBe('a\nb\nc')
+    expect(clipLines('abcdef', 4)).toBe('abc…')
+  })
 })
 
 test('a long command keeps its work item and stores clipped args', async ($, on) => {

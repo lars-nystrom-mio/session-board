@@ -155,7 +155,7 @@ def write_boards(root: Path):
             for i in range(5)]),
         {**board(F, 'C:\\Workspace.mioit\\dotnet-upgrade-kit', 'idle', now=now, events=[
             {'t': now - 70 * MIN, 'kind': 'prompt', 'text': envelope('mio-m3-sales-c7', 'c7', 'Please check these work items')},
-            {'t': now - 6 * MIN, 'kind': 'prompt', 'text': PASTED[:60]}]), 'prompt': PASTED},
+            {'t': now - 6 * MIN, 'kind': 'prompt', 'text': PASTED[:60] + '…'}]), 'prompt': PASTED},
         busy(now),
         *plans(now)[0],
         *stalls(now),
@@ -268,7 +268,7 @@ class MessagesView(unittest.TestCase):
         self.assertEqual(pre.inner_text(), '╭────┬─────╮\n│ id │ qty │\n├────┼─────┤\n│ k1 │   1 │\n╰────┴─────╯')
         self.assertEqual(pre.evaluate('(p) => getComputedStyle(p).whiteSpace'), 'pre')
         self.assertEqual(quote.locator('.paste summary').inner_text(), 'pasted · 5 lines')
-        # The timeline keeps 200 characters: a paste cut before its closing tag still reads as one.
+        # A clipped prompt (older hooks kept the paste in the timeline) whose paste lost its closing tag.
         timeline = self.page.locator('#d-body .timeline').inner_text()
         self.assertIn('[pasted · 1 line, cut short]', timeline)
         self.assertNotIn('pasted_content', timeline)

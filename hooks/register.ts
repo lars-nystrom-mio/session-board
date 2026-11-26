@@ -29,6 +29,8 @@ import {
   removeScript,
   staleBoards,
   clip,
+  clipLines,
+  promptLine,
   cronFired,
   cronToolDone,
   crossSessionMessage,
@@ -601,9 +603,9 @@ async function turnStarted($: EngineInterface, text: string) {
     notePrs(prLinksOf(text), agentName(from))
   } else if (text.trim()) {
     const shown = slash ? `/${slash.name} ${slash.args}`.trim() : text
-    b.prompt = clip(shown, 600)
+    b.prompt = clipLines(shown, 600)
     b.promptAt = now()
-    event('prompt', shown)
+    event('prompt', promptLine(shown))
     if (slash) {
       // Another command is a new task: the last one's progress report no longer
       // holds. A job firing the running skill again (a /loop tick) keeps it.

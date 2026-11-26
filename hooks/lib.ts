@@ -267,6 +267,62 @@ export function clip(text: string, max = 240): string {
   return flat.length > max ? flat.slice(0, max - 1) + '…' : flat
 }
 
+// A prompt for the status file: cut to max, but with its line breaks, so a
+// pasted table or log keeps its rows. clip() flattens everything else.
+export function clipLines(text: string, max: number): string {
+  const t = text.replace(/\r\n?/g, '\n').trim()
+  return t.length > max ? t.slice(0, max - 1) + '…' : t
+}
+
+// Text pasted into a prompt arrives as <pasted_content id="…">…</pasted_content id="…">,
+// which the terminal shows as the paste itself. A prompt clipped by clipLines
+// ends in "…", maybe inside a paste or a tag: there an unclosed paste is cut,
+// and anywhere else an opener with no closer is someone typing the markup.
+// dashboard/index.html keeps a copy of promptParts and promptLine in step by hand.
+export type PromptPart = { text: string } | { paste: string; cut: boolean }
+const PASTE_OPEN = /<pasted_content id="([^"<>]*)">/
+const TAG_STARTS = ['<pasted_content', '</pasted_content']
+
+export function promptParts(text: string): PromptPart[] {
+  let rest = text
+  const clipped = rest.endsWith('…')
+  if (clipped) {
+    rest = rest.slice(0, -1)
+    // A tag the clip cut in two.
+    const i = rest.lastIndexOf('<')
+    const head = i < 0 || rest.includes('>', i) ? '' : (rest.slice(i).match(/^<\/?\w*/)?.[0] ?? '')
+    if (head.length > 1 && TAG_STARTS.some((t) => t.startsWith(head) || (head === t && /^\s/.test(rest.slice(i + head.length))))) rest = rest.slice(0, i)
+  }
+  const parts: PromptPart[] = []
+  for (let o = PASTE_OPEN.exec(rest); o; o = PASTE_OPEN.exec(rest)) {
+    const after = rest.slice(o.index + o[0].length)
+    const id = (o[1] ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const c = new RegExp(`</pasted_content(?: id="${id}")?>`).exec(after)
+    if (!c && !clipped) break
+    parts.push({ text: rest.slice(0, o.index) })
+    // Blank lines around a paste go; a first line's indent stays.
+    parts.push({ paste: (c ? after.slice(0, c.index) : after).replace(/^\s*\n|\n\s*$/g, ''), cut: !c })
+    rest = c ? after.slice(c.index + c[0].length) : ''
+  }
+  parts.push({ text: rest })
+  const out = parts
+    .map((p): PromptPart => ('paste' in p ? p : { text: p.text.trim() }))
+    .filter((p) => 'paste' in p || p.text)
+  const last = out[out.length - 1]
+  if (clipped && last && 'text' in last) last.text += '…'
+  return out
+}
+
+export function pasteLabel(p: { paste: string; cut: boolean }): string {
+  const n = p.paste.trim() ? p.paste.split('\n').length : 0
+  return `pasted${n ? ` · ${n} line${n === 1 ? '' : 's'}` : ''}${p.cut ? ', cut short' : ''}`
+}
+
+// A prompt on one line: each paste becomes a short mark.
+export function promptLine(text: string): string {
+  return promptParts(text).map((p) => ('paste' in p ? `[${pasteLabel(p)}]` : p.text)).join(' ')
+}
+
 export function basename(path: string): string {
   const parts = path.replace(/[\\/]+$/, '').split(/[\\/]/)
   return parts[parts.length - 1] || path

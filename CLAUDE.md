@@ -62,10 +62,13 @@ install it and how to serve the page. This file is for working on it.
   nor for a quiet stall counted from that sight (`blind` in `seen`), which may
   have begun before the page loaded.
   Sandboxed files never notify.
-  Text pasted into a prompt arrives in `<pasted_content id="…">` markup, which
-  the 600-character clip can cut before its closing tag. `promptParts` splits
-  it out: one-line places show `[pasted · N lines]` (`promptLine`), the
-  drawer a monospace block that keeps its columns (`promptHtml`).
+  Text pasted into a prompt arrives in `<pasted_content id="…">` markup. The
+  hooks store `prompt` with its line breaks (`clipLines`, 600 characters, so
+  a paste can lose its closing tag) and log the timeline's prompt event as
+  `promptLine`. `promptParts` splits a paste out, and the page keeps a copy
+  of it and `promptLine` in step with `lib.ts` by hand: one-line places show
+  `[pasted · N lines]`, the drawer a monospace block that keeps its columns
+  (`promptHtml`). Typed markup with no closing tag stays text.
   Permission is asked from the header's **turn on**, and only in a secure context.
   A session's `plan` draws as a strip above the tiles of its group (`planOf`
   checks its shape, `planHtml` draws it). Each item's state comes from the
